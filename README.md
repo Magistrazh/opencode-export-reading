@@ -66,11 +66,13 @@ Search the history:
 
 ```bash
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "decision" --before-tail
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "decision" --from-index 100 --to-index 300
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "0\.2\.1-rc" --regex --before-tail
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "rule,decision,rejected option" --before-tail
 ```
 
-`--before-tail` limits results to the part removed by the last compaction.
+`--before-tail` limits results to the part removed by the last compaction;
+`--from-index`/`--to-index` limit them to an inclusive message-index range.
 `--queries` matches literal strings; use `--queries-file` for a batch of regexes.
 
 Read the surrounding messages when a hit needs more context:

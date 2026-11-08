@@ -1,6 +1,6 @@
 ---
 name: opencode-export-reading
-version: 0.11.0
+version: 0.12.0
 license: MIT
 description: Recover knowledge that compaction dropped from an OpenCode session by searching the full `opencode export` history instead of trusting the summary. Use whenever the user asks what we decided earlier, что было до компакта, что потерялось при сжатии, восстанови контекст, найди в старой истории, подтяни знания из экспорта; needs an old decision, command, version or caveat that is no longer in context; or opens any file produced by `opencode export`. Also use before quoting anything from an export. Never grep or read an export directly — the bundled script streams it.
 ---
@@ -86,6 +86,7 @@ python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries-file queries.t
 |---|---|
 | `--before-tail` | only hits before the last resolved `tail_start_id` |
 | `--before-compaction N` | only hits before the Nth compaction boundary |
+| `--from-index`, `--to-index` | search: inclusive message-index range |
 | `--fields` | search only: `text,reasoning,tool-input,tool-output,tool-title,tool-error,file` |
 | `--roles` | `user,assistant` |
 | `--regex`, `--case` | pattern instead of literal, case-sensitive |
@@ -104,6 +105,9 @@ message matters, not everything it contains.
 
 There is no stemming: use short stems (`квот`, not `квотами`) and try synonyms.
 For a topic search start with `--fields text`; broad terms fill the hit cap fast.
+Tool input is stored as JSON: search a short fragment (`mcp`), not a quoted or
+multi-line phrase (`"mcp":` or text with `\n`); edits and file contents inside
+tool calls follow the same rule.
 If 0 hits come with filters, retry without `--roles`/`--fields`; then a shorter
 stem or `--regex`. A hit in `reasoning` is not the answer; add `--fields text`.
 An expected zero needs no note.

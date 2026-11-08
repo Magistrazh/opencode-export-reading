@@ -117,6 +117,7 @@ def check_fixture(name: str, expected: dict, failures: list[str]) -> None:
     if name == "empty-summary":
         proc = run([str(path), "--show-summary", "1"])
         check(proc.stdout.strip() == "", "empty summary prints no text", failures)
+        check("empty" in proc.stderr.lower(), "empty summary explains itself", failures)
     if name == "huge-tool-output":
         proc = run([str(path), "--dump", "--from-index", "1", "--count", "1", "--max-chars", "100"])
         check("[truncated" in proc.stdout, "large tool output is truncated", failures)

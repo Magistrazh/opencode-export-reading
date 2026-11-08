@@ -572,7 +572,9 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
                    case: bool = False, limit: int = 20, context: int = 80,
                    roles: set[str] | None = None, fields: set[str] | None = None,
                    before_compaction: int | None = None,
-                   before_tail: bool = False) -> list[dict]:
+                   before_tail: bool = False,
+                   from_index: int | None = None,
+                   to_index: int | None = None) -> list[dict]:
     """Search several queries in one pass; each gets its own hits and meta."""
     if not queries or any(not q for q in queries):
         raise ExportError("пустой запрос: укажите строку или regex")
@@ -624,6 +626,10 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
             tail_idx = idx
         role = mi.get("role")
         if roles and role not in roles:
+            return
+        if from_index is not None and idx < from_index:
+            return
+        if to_index is not None and idx > to_index:
             return
         for qi, pattern in enumerate(patterns):
             for field, text in iter_fields(msg):
@@ -691,11 +697,14 @@ def find_hits(path: Path, query: str, regex: bool = False, case: bool = False,
               limit: int = 20, context: int = 80, roles: set[str] | None = None,
               fields: set[str] | None = None,
               before_compaction: int | None = None,
-              before_tail: bool = False) -> tuple[list[dict], dict]:
+              before_tail: bool = False,
+              from_index: int | None = None,
+              to_index: int | None = None) -> tuple[list[dict], dict]:
     result = find_hits_many(path, [query], regex=regex, case=case, limit=limit,
                             context=context, roles=roles, fields=fields,
                             before_compaction=before_compaction,
-                            before_tail=before_tail)[0]
+                            before_tail=before_tail,
+                            from_index=from_index, to_index=to_index)[0]
     return result["hits"], result["meta"]
 
 
@@ -1389,10 +1398,30 @@ def selftest() -> int:
         later, _ = find_hits(comp, "Postgres")
         ok(len(later) == 1 and not later[0]["before_last_compaction"],
            "поиск после компакции не помечается как потерянный")
+        ranged = find_hits_many(comp, ["SQLite"], from_index=0, to_index=1)
+        ok(len(ranged[0]["hits"]) == 1 and ranged[0]["hits"][0]["idx"] == 0,
+           "search range: inclusive index bounds")
+        ranged = find_hits_many(comp, ["SQLite"], from_index=4)
+        ok(ranged[0]["hits"] == [], "search range: lower bound excludes earlier hits")
         dumped = "\n".join(dump_range(comp, "m0", "m1", None))
         ok("SQLite" in dumped and "принято" in dumped and "Postgres" not in dumped,
            "дамп диапазона берёт ровно нужные сообщения")
         ok(show_summary(comp, 1).startswith("сводка"), "сводка компакции читается")
+        empty_path = Path(td) / "empty-summary.json"
+        empty_path.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
+            {"info": {"id": "e0", "role": "user", "time": {"created": 1}},
+             "parts": [{"type": "text", "text": "x"}]},
+            {"info": {"id": "e1", "role": "user", "time": {"created": 2}},
+             "parts": [{"type": "compaction", "auto": True, "tail_start_id": "e2"}]},
+            {"info": {"id": "e2", "role": "assistant", "mode": "compaction",
+                      "time": {"created": 3}, "cost": 0, "tokens": {},
+                      "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": ""}]},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        ok(show_summary(empty_path, 1) == "", "empty summary has no text")
+        rc, out, err = run_cli([str(empty_path), "--show-summary", "1"])
+        ok(rc == 0 and out.strip() == "" and "empty" in err,
+           "empty summary explains itself on stderr")
         far_summary = json.loads(json.dumps(comp_data))
         far_summary["messages"].insert(3, {"info": {"id": "mx", "role": "assistant",
                                                     "time": {"created": 3},
@@ -1514,6 +1543,13 @@ def selftest() -> int:
         rc, out, _ = run_cli([str(two_path), "--search", "middle", "--json"])
         payload = json.loads(out)
         ok(rc == 0 and payload["total"] == 1 and payload["stored"] == 1, "CLI: поиск JSON")
+        rc, out, _ = run_cli([str(comp), "--search", "SQLite", "--from-index", "4"])
+        ok(rc == 0 and "hits 0" in out, "CLI: search range")
+        rc, _, err = run_cli([str(comp), "--search", "SQLite",
+                              "--from-index", "3", "--to-index", "1"])
+        ok(rc == 2 and "--to-index" in err, "CLI: inverted search range rejected")
+        rc, _, err = run_cli([str(comp), "--search", "SQLite", "--from-id", "m0"])
+        ok(rc == 2 and "--from-index" in err, "CLI: search rejects id bounds")
         rc, out, _ = run_cli([str(comp), "--show-summary", "1", "--json"])
         ok(rc == 0 and json.loads(out)["summary"] == 1, "CLI: summary JSON")
         rc, out, _ = run_cli([str(comp), "--compactions", "--json"])
@@ -1659,6 +1695,12 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
         ap.error("--json не поддерживается для --dump/--around: это текстовый вывод")
     if args.search is not None and (args.queries or args.queries_file):
         ap.error("--search не сочетается с --queries/--queries-file")
+    if (args.search is not None or args.queries or args.queries_file) and (
+            args.from_id or args.to_id):
+        ap.error("--search: используйте --from-index/--to-index; id не поддерживается")
+    if (args.from_index is not None and args.to_index is not None
+            and args.to_index < args.from_index):
+        ap.error("--to-index не может быть меньше --from-index")
     if args.queries and args.regex:
         ap.error("--queries literal-only: для regex используйте --queries-file")
     if args.queries and args.queries_file:
@@ -1791,7 +1833,8 @@ def cmd_search(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
                              limit=want, context=args.context,
                              roles=roles, fields=fields,
                              before_compaction=args.before_compaction,
-                             before_tail=args.before_tail)
+                             before_tail=args.before_tail,
+                             from_index=args.from_index, to_index=args.to_index)
     pages = []
     for result in results:
         hits = result["hits"]
@@ -1931,6 +1974,9 @@ def cmd_summary(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
         print(json.dumps({"summary": args.show_summary, "chars": len(text),
                           "text": text}, ensure_ascii=False, indent=2))
     else:
+        if not text:
+            print(f"note: summary {args.show_summary} is empty "
+                  "(compaction without summary text)", file=sys.stderr)
         print(text)
     return 0, extra
 

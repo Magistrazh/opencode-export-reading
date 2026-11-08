@@ -1,5 +1,15 @@
 # Changes
 
+## 0.12.0
+
+- `--search` and `--queries` accept `--from-index`/`--to-index` to limit hits to
+  an inclusive message-index range; `--from-id`/`--to-id` are rejected for
+  search instead of being ignored.
+- `--show-summary N` prints an explanatory note to stderr when the summary is
+  empty; stdout stays empty and `--json` is unchanged.
+- `SKILL.md`: tool input is JSON, so search a short fragment rather than a
+  quoted or multi-line phrase.
+
 ## 0.11.0
 
 - `feedback.py`: append-only triage ledger next to feedback records
