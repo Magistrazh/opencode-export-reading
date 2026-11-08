@@ -2,8 +2,8 @@
 """Structural validator for the opencode-export-reading skill.
 
 Run from the repository root or anywhere:
-    python skills/opencode-export-reading/scripts/validate.py
-    python skills/opencode-export-reading/scripts/validate.py --selftest
+    python scripts/validate.py
+    python scripts/validate.py --selftest
 
 No third-party packages. No new user-facing skill flags: this script is an
 internal release gate.
@@ -29,9 +29,10 @@ def _utf8_stdio() -> None:
 
 _utf8_stdio()
 
-SKILL_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = SKILL_ROOT.parents[1]
-SKILL_REL = Path("skills") / SKILL_ROOT.name
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SKILL_NAME = "opencode-export-reading"
+SKILL_ROOT = REPO_ROOT / "skills" / SKILL_NAME
+SKILL_REL = Path("skills") / SKILL_NAME
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 KEBAB = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
@@ -51,7 +52,6 @@ REQUIRED_SKILL = [
     "SKILL.md",
     "scripts/inspect-export.py",
     "scripts/feedback.py",
-    "scripts/validate.py",
     "references/schema.md",
 ]
 EVAL_REQUIRED = [

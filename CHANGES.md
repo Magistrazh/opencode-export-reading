@@ -1,5 +1,13 @@
 # Changes
 
+## 0.13.1
+
+- Moved `validate.py` out of the skill payload to `scripts/` at the repository
+  root: it is a repository gate, not a runtime capability, and it failed when
+  the skill was installed standalone. New installs contain only
+  `inspect-export.py` and `feedback.py`.
+- README: static skills.sh badge and the `npx skills add` install hint.
+
 ## 0.13.0
 
 - Repository layout: the skill payload (`SKILL.md`, `scripts/`, `references/`)

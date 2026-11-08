@@ -137,7 +137,7 @@ compactions, поиска, сводок и `--list-exports`.
 ```bash
 python skills/opencode-export-reading/scripts/inspect-export.py --selftest
 python skills/opencode-export-reading/scripts/feedback.py --selftest
-python skills/opencode-export-reading/scripts/validate.py --selftest
+python scripts/validate.py --selftest
 python evals/opencode-export-reading/run-golden.py
 ```
 
@@ -158,7 +158,7 @@ STAMP=local RUNS=2 bash evals/opencode-export-reading/run-trigger.sh
 
 - `skills/opencode-export-reading/scripts/inspect-export.py` — парсер экспорта и CLI
 - `skills/opencode-export-reading/scripts/feedback.py` — локальные записи отзывов
-- `skills/opencode-export-reading/scripts/validate.py` — проверка структуры репозитория
+- `scripts/validate.py` — проверка структуры репозитория
 - `skills/opencode-export-reading/references/schema.md` — поля экспорта, которые использует парсер
 - [CHANGES.md](CHANGES.md) — история релизов
 - [evals/opencode-export-reading/README.md](evals/opencode-export-reading/README.md) — набор проверок evals

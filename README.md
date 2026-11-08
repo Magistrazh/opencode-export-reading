@@ -135,7 +135,7 @@ place for them.
 ```bash
 python skills/opencode-export-reading/scripts/inspect-export.py --selftest
 python skills/opencode-export-reading/scripts/feedback.py --selftest
-python skills/opencode-export-reading/scripts/validate.py --selftest
+python scripts/validate.py --selftest
 python evals/opencode-export-reading/run-golden.py
 ```
 
@@ -156,7 +156,7 @@ STAMP=local RUNS=2 bash evals/opencode-export-reading/run-trigger.sh
 
 - `skills/opencode-export-reading/scripts/inspect-export.py` — export parser and CLI
 - `skills/opencode-export-reading/scripts/feedback.py` — local feedback records
-- `skills/opencode-export-reading/scripts/validate.py` — repository checks
+- `scripts/validate.py` — repository checks
 - `skills/opencode-export-reading/references/schema.md` — export fields used by the parser
 - [CHANGES.md](CHANGES.md) — release history
 - [evals/opencode-export-reading/README.md](evals/opencode-export-reading/README.md) — eval harness

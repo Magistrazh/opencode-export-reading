@@ -94,8 +94,8 @@ returns exit 1.
 Structural gate:
 
 ```bash
-python skills/opencode-export-reading/scripts/validate.py
-python skills/opencode-export-reading/scripts/validate.py --selftest
+python scripts/validate.py
+python scripts/validate.py --selftest
 ```
 
 ## Rules
