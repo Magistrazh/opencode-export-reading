@@ -2,7 +2,7 @@
 
 [Русская версия](README.ru.md)
 
-[![skills.sh](https://skills.sh/b/Magistrazh/opencode-export-reading)](https://skills.sh/Magistrazh/opencode-export-reading)
+[![skills.sh](https://img.shields.io/badge/skills.sh-listed-blue)](https://skills.sh/magistrazh/opencode-export-reading)
 
 OpenCode compaction leaves a summary in the live context and drops the messages
 before `tail_start_id`. The session export still contains them. This tool reads
@@ -14,6 +14,14 @@ third-party dependencies.
 ## Install
 
 Requires Python 3.10+.
+
+The quickest install is the skills CLI:
+
+```bash
+npx skills add Magistrazh/opencode-export-reading
+```
+
+To install from a clone, link the skill folder:
 
 ```bash
 git clone https://github.com/Magistrazh/opencode-export-reading.git

@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-[![skills.sh](https://skills.sh/b/Magistrazh/opencode-export-reading)](https://skills.sh/Magistrazh/opencode-export-reading)
+[![skills.sh](https://img.shields.io/badge/skills.sh-listed-blue)](https://skills.sh/magistrazh/opencode-export-reading)
 
 При компакции OpenCode в текущем контексте остаётся сводка, а сообщения до
 `tail_start_id` исчезают. В экспорте сессии они сохраняются. Этот инструмент
@@ -15,6 +15,14 @@
 ## Установка
 
 Нужен Python 3.10+.
+
+Самый быстрый способ — skills CLI:
+
+```bash
+npx skills add Magistrazh/opencode-export-reading
+```
+
+Установка из клона:
 
 ```bash
 git clone https://github.com/Magistrazh/opencode-export-reading.git
