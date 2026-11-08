@@ -30,5 +30,5 @@ history and is mitigated by these rules, not by a scanner toggle.
 
 ## Supported versions
 
-Security fixes are applied to the current `0.13.x` line. Older versions are not
+Security fixes are applied to the current `0.14.x` line. Older versions are not
 supported.

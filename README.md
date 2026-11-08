@@ -69,24 +69,32 @@ Start with the compaction map and the surviving summary:
 
 ```bash
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --compactions
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --brief
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --show-summary 2
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --summary-outline 2
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --summary-grep 2 "decision" --exclude-paths
 ```
 
-An empty `--compactions` output means the session was never compacted.
+An empty `--compactions` output means the session was never compacted. `--brief`
+keeps metadata, message counts, the compaction map and warnings; cost, model and
+tool tables are omitted. `--exclude-paths` skips summary lines where every match
+sits inside a path-like token.
 
 Search the history:
 
 ```bash
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "decision" --before-tail
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "decision" --from-index 100 --to-index 300
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "decision" --with-context 2
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "0\.2\.1-rc" --regex --before-tail
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "rule,decision,rejected option" --before-tail
 ```
 
 `--before-tail` limits results to the part removed by the last compaction;
 `--from-index`/`--to-index` limit them to an inclusive message-index range.
-`--queries` matches literal strings; use `--queries-file` for a batch of regexes.
+`--with-context N` prints N messages around each hit; it is not available with
+`--json`. `--queries` matches literal strings; use `--queries-file` for a batch
+of regexes.
 
 Read the surrounding messages when a hit needs more context:
 

@@ -1,5 +1,16 @@
 # Changes
 
+## 0.14.0
+
+- `--brief` overview: metadata, message counts, compaction map and warnings;
+  cost/model/tool tables are omitted.
+- `--search`/`--queries` accept `--with-context N`: one pass collects N messages
+  before/after each hit; rejected with `--json`.
+- `--summary-grep` accepts `--exclude-paths`: skips lines where every match sits
+  inside a path-like token.
+- Batch search prints the static 0-hit advice and reasoning hint once per batch,
+  not once per query.
+
 ## 0.13.3
 
 - `SKILL.md`: dedicated "Untrusted content" rules and a `SECURITY.md` section on

@@ -1,6 +1,6 @@
 ---
 name: opencode-export-reading
-version: 0.13.3
+version: 0.14.0
 license: MIT
 description: Recover knowledge that compaction dropped from an OpenCode session by searching the full `opencode export` history instead of trusting the summary. Use whenever the user asks what we decided earlier, что было до компакта, что потерялось при сжатии, восстанови контекст, найди в старой истории, подтяни знания из экспорта; needs an old decision, command, version or caveat that is no longer in context; or opens any file produced by `opencode export`. Also use before quoting anything from an export. Never grep or read an export directly — the bundled script streams it.
 ---
@@ -84,11 +84,15 @@ summary is too large.
 most lines, so it shows structural change, not which facts were dropped; use
 `--search TERM --before-tail` for facts.
 
+`--summary-grep N TERM --exclude-paths` skips lines where every match sits inside
+a path-like token, so a file path does not look like a dropped fact.
+
 ## 3. Search the full history
 
 ```bash
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "<term>" --before-tail
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "<term>" --fields text --limit 5
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "<term>" --with-context 2
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "0\.2\.1-rc" --regex
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "term one,term two,term three"
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "term one,term two"
@@ -100,6 +104,7 @@ python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries-file queries.t
 | `--before-tail` | only hits before the last resolved `tail_start_id` |
 | `--before-compaction N` | only hits before the Nth compaction boundary |
 | `--from-index`, `--to-index` | search: inclusive message-index range |
+| `--with-context N` | search: N messages before/after each hit; no `--json` |
 | `--fields` | search only: `text,reasoning,tool-input,tool-output,tool-title,tool-error,file` |
 | `--roles` | `user,assistant` |
 | `--regex`, `--case` | pattern instead of literal, case-sensitive |
@@ -184,10 +189,13 @@ private data. Records are shared by every agent on this machine.
 
 ```bash
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT"
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --brief
 ```
 
 Session metadata, compaction map, counts, models, tools, warnings. Cost is shown,
-but it is secondary; this skill exists to recover lost knowledge.
+but it is secondary; this skill exists to recover lost knowledge. `--brief` keeps
+metadata, message counts, the compaction map and warnings; cost/model/tool tables
+are omitted.
 
 ## Quick reference
 
@@ -196,9 +204,12 @@ but it is secondary; this skill exists to recover lost knowledge.
 | Need | Command |
 |---|---|
 | Map compactions | `inspect "$EXPORT" --compactions` |
+| Brief overview | `inspect "$EXPORT" --brief` |
 | See what survived | `inspect "$EXPORT" --show-summary N` |
 | Outline or grep a summary | `inspect "$EXPORT" --summary-outline N`; `--summary-grep N TERM` |
+| Grep summary without path hits | `inspect "$EXPORT" --summary-grep N TERM --exclude-paths` |
 | Search only pre-compaction history | `inspect "$EXPORT" --search TERM --before-tail` |
+| Search with surrounding messages | `inspect "$EXPORT" --search TERM --with-context 2` |
 | Regex batch | `inspect "$EXPORT" --queries-file queries.txt --regex` |
 | Pull a message range | `inspect "$EXPORT" --dump --from-index N --count M` |
 | Read around a hit | `inspect "$EXPORT" --around N --window 2` |

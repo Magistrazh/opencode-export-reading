@@ -574,7 +574,8 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
                    before_compaction: int | None = None,
                    before_tail: bool = False,
                    from_index: int | None = None,
-                   to_index: int | None = None) -> list[dict]:
+                   to_index: int | None = None,
+                   context_window: int = 0) -> list[dict]:
     """Search several queries in one pass; each gets its own hits and meta."""
     if not queries or any(not q for q in queries):
         raise ExportError("пустой запрос: укажите строку или regex")
@@ -582,6 +583,8 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
     patterns = [re.compile(q if regex else re.escape(q), flags) for q in queries]
     hits_by: list[list[dict]] = [[] for _ in queries]
     totals = [0 for _ in queries]
+    recent: list[tuple[int, dict]] = []
+    pending: list[dict] = []
     cap = max(limit * 10, 200)
     events = scan_compactions(path)
     selected_tail: str | None = None
@@ -615,6 +618,19 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
 
     def on_message(idx: int, msg: dict):
         nonlocal tail_idx, selected_seen
+        if context_window:
+            before = list(recent)
+            if pending:
+                still = []
+                for hit in pending:
+                    if idx > hit["idx"] and len(hit["context_after"]) < context_window:
+                        hit["context_after"].append((idx, msg))
+                    if len(hit["context_after"]) < context_window:
+                        still.append(hit)
+                pending[:] = still
+            recent.append((idx, msg))
+            if len(recent) > context_window:
+                del recent[0]
         mi = msg.get("info") or {}
         mid = mi.get("id")
         if selected_tail is not None:
@@ -642,7 +658,7 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
                 if len(hits_by[qi]) < cap:
                     start = max(0, match.start() - context)
                     end = min(len(text), match.end() + context)
-                    hits_by[qi].append({
+                    hit = {
                         "idx": idx,
                         "id": mid,
                         "time": (mi.get("time") or {}).get("created"),
@@ -650,7 +666,12 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
                         "model": mi.get("modelID"),
                         "field": field,
                         "snippet": " ".join(text[start:end].split()),
-                    })
+                    }
+                    if context_window:
+                        hit["context_before"] = before[-context_window:] if before else []
+                        hit["context_after"] = []
+                        pending.append(hit)
+                    hits_by[qi].append(hit)
                 break
 
     stream_export(path, on_message)
@@ -699,12 +720,14 @@ def find_hits(path: Path, query: str, regex: bool = False, case: bool = False,
               before_compaction: int | None = None,
               before_tail: bool = False,
               from_index: int | None = None,
-              to_index: int | None = None) -> tuple[list[dict], dict]:
+              to_index: int | None = None,
+              context_window: int = 0) -> tuple[list[dict], dict]:
     result = find_hits_many(path, [query], regex=regex, case=case, limit=limit,
                             context=context, roles=roles, fields=fields,
                             before_compaction=before_compaction,
                             before_tail=before_tail,
-                            from_index=from_index, to_index=to_index)[0]
+                            from_index=from_index, to_index=to_index,
+                            context_window=context_window)[0]
     return result["hits"], result["meta"]
 
 
@@ -926,11 +949,30 @@ def summary_outline(text: str) -> list[str]:
     return out
 
 
-def summary_grep(text: str, query: str, regex: bool = False, case: bool = False) -> list[tuple[int, str]]:
+def summary_grep(text: str, query: str, regex: bool = False, case: bool = False,
+                 exclude_paths: bool = False) -> list[tuple[int, str]]:
     flags = 0 if case else re.IGNORECASE
     pattern = re.compile(query if regex else re.escape(query), flags)
-    return [(i, line) for i, line in enumerate(text.splitlines(), 1)
-            if pattern.search(line)]
+    found = []
+    for i, line in enumerate(text.splitlines(), 1):
+        matches = list(pattern.finditer(line))
+        if not matches:
+            continue
+        if exclude_paths and all(match_in_path(line, m.start(), m.end())
+                                 for m in matches):
+            continue
+        found.append((i, line))
+    return found
+
+
+def match_in_path(line: str, start: int, end: int) -> bool:
+    """True when the match sits inside a path-like token (heuristic)."""
+    for token in re.finditer(r"[^\s\"'`]+", line):
+        if token.start() <= start and end <= token.end():
+            text = token.group(0).strip("()[]{}<>,;:\"'`")
+            return ("/" in text or "\\" in text
+                    or re.match(r"^[A-Za-z]:", text) is not None)
+    return False
 
 
 def summary_diff(a: str, b: str, label_a: str = "A", label_b: str = "B") -> list[str]:
@@ -1095,7 +1137,7 @@ def safe_line(value: object) -> str:
     return "".join(ch if ch in "\n\t" or 31 < ord(ch) != 127 else "?" for ch in text)
 
 
-def human(summary: dict) -> str:
+def human(summary: dict, brief: bool = False) -> str:
     s = summary
     out: list[str] = []
     size = f" ({s['size_bytes'] / 1024**2:.1f} MB)" if s["size_bytes"] else ""
@@ -1114,34 +1156,35 @@ def human(summary: dict) -> str:
         f"messages    {m['total']} (user {m['user']}, assistant {m['assistant']}, "
         f"errors {m['with_error']})"
     )
-    out.append(f"finish      {m['finish']}")
-    out.append(f"models      {len(s['models'])} (session.model is only the last one)")
-    for mod in s["models"]:
+    if not brief:
+        out.append(f"finish      {m['finish']}")
+        out.append(f"models      {len(s['models'])} (session.model is only the last one)")
+        for mod in s["models"]:
+            out.append(
+                f"  {mod['provider']}/{mod['model']}@{mod['variant']:<8} "
+                f"{mod['messages']:>5} msg  {money(mod['cost']):>10}  "
+                f"in {tokens(mod['input'])}  out {tokens(mod['output'])}  "
+                f"reason {tokens(mod['reasoning'])}  cache-r {tokens(mod['cache_read'])}"
+            )
+        t = s["totals"]
         out.append(
-            f"  {mod['provider']}/{mod['model']}@{mod['variant']:<8} "
-            f"{mod['messages']:>5} msg  {money(mod['cost']):>10}  "
-            f"in {tokens(mod['input'])}  out {tokens(mod['output'])}  "
-            f"reason {tokens(mod['reasoning'])}  cache-r {tokens(mod['cache_read'])}"
+            f"totals      {money(t['cost'])}  in {tokens(t['input'])}  out {tokens(t['output'])}  "
+            f"reason {tokens(t['reasoning'])}  cache-r {tokens(t['cache_read'])}  "
+            f"cache-w {tokens(t['cache_write'])}"
         )
-    t = s["totals"]
-    out.append(
-        f"totals      {money(t['cost'])}  in {tokens(t['input'])}  out {tokens(t['output'])}  "
-        f"reason {tokens(t['reasoning'])}  cache-r {tokens(t['cache_read'])}  "
-        f"cache-w {tokens(t['cache_write'])}"
-    )
-    out.append(f"parts       {s['parts']}")
-    tools = s["tools"]
-    out.append(
-        f"tools       {tools['calls']} calls, {tools['output_bytes'] / 1024**2:.1f} MB output, "
-        f"statuses {tools['statuses']}"
-    )
-    out.append(f"  counts    {dict(list(tools['counts'].items())[:10])}")
-    for item in tools["largest"][:3]:
-        out.append(f"  big       {item['bytes'] / 1024:.0f} KB  {item['tool']}  {safe_line(item['title'])[:70]}")
-    if s["files"]:
-        mimes = Counter(f["mime"] for f in s["files"])
-        total = sum(f["approx_bytes"] for f in s["files"])
-        out.append(f"files       {len(s['files'])} ({total / 1024**2:.2f} MB decoded): {dict(mimes)}")
+        out.append(f"parts       {s['parts']}")
+        tools = s["tools"]
+        out.append(
+            f"tools       {tools['calls']} calls, {tools['output_bytes'] / 1024**2:.1f} MB output, "
+            f"statuses {tools['statuses']}"
+        )
+        out.append(f"  counts    {dict(list(tools['counts'].items())[:10])}")
+        for item in tools["largest"][:3]:
+            out.append(f"  big       {item['bytes'] / 1024:.0f} KB  {item['tool']}  {safe_line(item['title'])[:70]}")
+        if s["files"]:
+            mimes = Counter(f["mime"] for f in s["files"])
+            total = sum(f["approx_bytes"] for f in s["files"])
+            out.append(f"files       {len(s['files'])} ({total / 1024**2:.2f} MB decoded): {dict(mimes)}")
     events = s["compaction_events"]
     if events:
         out.append(f"compactions {len(events)} (последняя #{events[-1]['n']}; "
@@ -1157,27 +1200,28 @@ def human(summary: dict) -> str:
                    "/ --show-summary N")
     else:
         out.append("compactions none")
-    ins = s["insights"]
-    if ins["top_cost"]:
-        out.append("where the money went")
-        for item in ins["top_cost"]:
-            out.append(
-                f"  {money(item['cost']):>10}  {item['model']:<28} {tokens(item['tokens']):>6} tok  "
-                f"{safe_line(item['brief'])}"
+    if not brief:
+        ins = s["insights"]
+        if ins["top_cost"]:
+            out.append("where the money went")
+            for item in ins["top_cost"]:
+                out.append(
+                    f"  {money(item['cost']):>10}  {item['model']:<28} {tokens(item['tokens']):>6} tok  "
+                    f"{safe_line(item['brief'])}"
+                )
+        if ins["errors"]:
+            out.append("tool errors")
+            for item in ins["errors"]:
+                out.append(f"  {item['count']:>3}x {item['tool']:<10} {safe_line(item['error'])[:90]}")
+        if ins["repeated"]:
+            out.append("repeated calls")
+            for item in ins["repeated"]:
+                out.append(f"  {item['count']:>3}x {item['tool']:<10} {safe_line(item['call'])[:90]}")
+        if len(ins["cost_by_agent"]) > 1:
+            agents = ", ".join(
+                f"{a['agent']} {money(a['cost'])} ({a['messages']})" for a in ins["cost_by_agent"][:5]
             )
-    if ins["errors"]:
-        out.append("tool errors")
-        for item in ins["errors"]:
-            out.append(f"  {item['count']:>3}x {item['tool']:<10} {safe_line(item['error'])[:90]}")
-    if ins["repeated"]:
-        out.append("repeated calls")
-        for item in ins["repeated"]:
-            out.append(f"  {item['count']:>3}x {item['tool']:<10} {safe_line(item['call'])[:90]}")
-    if len(ins["cost_by_agent"]) > 1:
-        agents = ", ".join(
-            f"{a['agent']} {money(a['cost'])} ({a['messages']})" for a in ins["cost_by_agent"][:5]
-        )
-        out.append(f"by agent    {agents}")
+            out.append(f"by agent    {agents}")
     if s["warnings"]:
         out.append("warnings")
         for w in s["warnings"]:
@@ -1258,6 +1302,15 @@ def selftest() -> int:
        "самые дорогие сообщения отсортированы")
     ok(s["insights"]["top_cost"][0]["brief"] == "second answer",
        "у дорогого сообщения есть краткое описание")
+    full = human(s)
+    brief = human(s, brief=True)
+    ok("models" in full and "totals" in full and "tools" in full
+       and "where the money went" in full, "full overview keeps cost/model/tool tables")
+    ok("models" not in brief and "totals" not in brief and "tools" not in brief
+       and "where the money went" not in brief,
+       "brief overview drops cost/model/tool tables")
+    ok("messages" in brief and "compactions" in brief and "warnings" in brief,
+       "brief overview keeps metadata, compactions and warnings")
 
     raises(lambda: analyse_data({"info": {}, "messages": {}}), "messages не список — отказ")
     raises(lambda: analyse_data({"messages": []}), "нет info — отказ")
@@ -1403,6 +1456,15 @@ def selftest() -> int:
            "search range: inclusive index bounds")
         ranged = find_hits_many(comp, ["SQLite"], from_index=4)
         ok(ranged[0]["hits"] == [], "search range: lower bound excludes earlier hits")
+        ctx_hits, _ = find_hits(comp, "SQLite", context_window=1)
+        first = next(h for h in ctx_hits if h["idx"] == 0)
+        ok([i for i, _ in first["context_before"]] == []
+           and [i for i, _ in first["context_after"]] == [1],
+           "search context: after-context collected")
+        last = next(h for h in ctx_hits if h["idx"] == 3)
+        ok([i for i, _ in last["context_before"]] == [2]
+           and [i for i, _ in last["context_after"]] == [4],
+           "search context: before/after collected")
         dumped = "\n".join(dump_range(comp, "m0", "m1", None))
         ok("SQLite" in dumped and "принято" in dumped and "Postgres" not in dumped,
            "дамп диапазона берёт ровно нужные сообщения")
@@ -1440,6 +1502,14 @@ def selftest() -> int:
         ok(summary_grep(summary_text, "beta") == [(4, "beta: gamma")],
            "summary grep: строка с термином")
         ok(len(summary_diff("a\nb", "a\nc")) >= 3, "summary diff: различия видны")
+        path_text = ("see C:\\repo\\alpha.txt\n"
+                     "alpha rule\n"
+                     "both C:\\alpha and alpha rule\n"
+                     "https://example.com/alpha\n")
+        ok(len(summary_grep(path_text, "alpha")) == 4,
+           "summary grep: paths match by default")
+        ok([n for n, _ in summary_grep(path_text, "alpha", exclude_paths=True)] == [2, 3],
+           "summary grep: --exclude-paths skips path-only lines")
 
         ids_only = format_message(0, {"info": {"id": "m0", "role": "user",
                                                "time": {"created": 1}},
@@ -1550,6 +1620,15 @@ def selftest() -> int:
         ok(rc == 2 and "--to-index" in err, "CLI: inverted search range rejected")
         rc, _, err = run_cli([str(comp), "--search", "SQLite", "--from-id", "m0"])
         ok(rc == 2 and "--from-index" in err, "CLI: search rejects id bounds")
+        rc, out, _ = run_cli([str(comp), "--search", "SQLite",
+                              "--with-context", "1"])
+        ok(rc == 0 and "context:" in out and "принято" in out and "Postgres" in out,
+           "CLI: search with context")
+        rc, _, _ = run_cli([str(comp), "--with-context", "1"])
+        ok(rc == 2, "CLI: --with-context requires search")
+        rc, _, _ = run_cli([str(comp), "--search", "SQLite",
+                            "--with-context", "1", "--json"])
+        ok(rc == 2, "CLI: --with-context + json rejected")
         rc, out, _ = run_cli([str(comp), "--show-summary", "1", "--json"])
         ok(rc == 0 and json.loads(out)["summary"] == 1, "CLI: summary JSON")
         rc, out, _ = run_cli([str(comp), "--compactions", "--json"])
@@ -1571,6 +1650,21 @@ def selftest() -> int:
            "CLI: --queries rejects regex, points to --queries-file")
         rc, out, _ = run_cli([str(two_path), "--queries", "middle,old"])
         ok(rc == 0 and "query 1/2" in out, "CLI: literal --queries still splits")
+        rc, out, _ = run_cli([str(two_path), "--queries", "absent1,absent2"])
+        ok(rc == 0 and out.count("first retry") == 1,
+           "CLI: batch 0-hit advice printed once")
+        reason_path = Path(td) / "reason.json"
+        reason_path.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
+            {"info": {"id": "r0", "role": "assistant", "time": {"created": 1},
+                      "cost": 0, "tokens": {}, "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "reasoning", "text": "alpha"}]},
+            {"info": {"id": "r1", "role": "assistant", "time": {"created": 2},
+                      "cost": 0, "tokens": {}, "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "reasoning", "text": "alpha"}]},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        rc, out, _ = run_cli([str(reason_path), "--queries", "alpha,missing"])
+        ok(rc == 0 and out.count("some hits are in reasoning") == 1,
+           "CLI: batch reasoning hint printed once")
         rc, out, _ = run_cli([str(comp), "--summary-outline", "1"])
         ok(rc == 0 and "outline" in out, "CLI: standalone summary-outline")
         rc, out, _ = run_cli([str(comp), "--summary-grep", "1", "beta"])
@@ -1613,6 +1707,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--list-exports", nargs="?", const=".", metavar="DIR",
                     help="список *.json в каталоге: размер и дата")
     ap.add_argument("--json", action="store_true", help="машинный вывод")
+    ap.add_argument("--brief", action="store_true",
+                    help="overview без cost/model/tool-таблиц")
+    ap.add_argument("--exclude-paths", action="store_true",
+                    help="только для --summary-grep: пропускать строки, где все "
+                         "совпадения внутри путей")
     ap.add_argument("--top", type=non_negative, default=5, help="сколько строк в каждом разборе")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--compactions", action="store_true", help="карта компакций")
@@ -1632,6 +1731,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--regex", action="store_true", help="regex вместо literal")
     ap.add_argument("--case", action="store_true", help="учитывать регистр")
     ap.add_argument("--limit", type=positive, default=20, help="хитов на страницу")
+    ap.add_argument("--with-context", type=positive, metavar="N",
+                    help="search: N сообщений до/после каждого хита")
     ap.add_argument("--context", type=non_negative, default=80,
                     help="символов вокруг совпадения")
     ap.add_argument("--roles", default="", help="user,assistant")
@@ -1679,11 +1780,21 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
             args.to_index is not None, args.count, args.all,
             args.regex, args.case, args.offset, args.window != 2,
             args.max_chars != 3000, args.limit != 20, args.context != 80,
-            args.top != 5,
+            args.top != 5, args.brief,
         ))
         if conflicts:
             ap.error("--list-exports не сочетается с файлами и другими режимами")
         return
+    if args.brief:
+        if args.json:
+            ap.error("--brief не сочетается с --json")
+        if any((
+            args.search is not None, args.queries, args.queries_file, args.timeline,
+            args.dump, args.around is not None, args.compactions,
+            args.show_summary is not None, args.summary_diff,
+            args.summary_outline is not None, args.summary_grep is not None,
+        )):
+            ap.error("--brief работает только с overview")
     if args.summary_grep is not None:
         try:
             number = int(args.summary_grep[0])
@@ -1691,6 +1802,8 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
             ap.error("--summary-grep: первое значение должно быть номером сводки")
         if number < 1:
             ap.error("--summary-grep: номер сводки должен быть >= 1")
+    if args.exclude_paths and args.summary_grep is None:
+        ap.error("--exclude-paths работает только с --summary-grep")
     if args.json and (args.dump or args.around is not None):
         ap.error("--json не поддерживается для --dump/--around: это текстовый вывод")
     if args.search is not None and (args.queries or args.queries_file):
@@ -1713,8 +1826,14 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
         ap.error("--queries/--queries-file не сочетаются с другими режимами")
     if args.ids and not (args.dump or args.around is not None):
         ap.error("--ids работает только с --dump/--around")
-    if args.only and not (args.dump or args.around is not None):
-        ap.error("--only работает только с --dump/--around")
+    if args.with_context is not None and not (
+            args.search is not None or args.queries or args.queries_file):
+        ap.error("--with-context работает только с --search/--queries")
+    if args.with_context is not None and args.json:
+        ap.error("--with-context не сочетается с --json")
+    if args.only and not (args.dump or args.around is not None
+                          or args.with_context is not None):
+        ap.error("--only работает только с --dump/--around/--with-context")
     if args.only:
         allowed = {"text", "reasoning", "tool", "file", "compaction"}
         bad = {x.strip() for x in args.only.split(",") if x.strip()} - allowed
@@ -1828,13 +1947,15 @@ def cmd_search(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
         raise ExportError("пустой список запросов")
     roles = {r.strip() for r in args.roles.split(",") if r.strip()} or None
     fields = {f.strip() for f in args.fields.split(",") if f.strip()} or None
+    only = {f.strip() for f in args.only.split(",") if f.strip()} or None
     want = args.offset + args.limit
     results = find_hits_many(path, queries, regex=args.regex, case=args.case,
                              limit=want, context=args.context,
                              roles=roles, fields=fields,
                              before_compaction=args.before_compaction,
                              before_tail=args.before_tail,
-                             from_index=args.from_index, to_index=args.to_index)
+                             from_index=args.from_index, to_index=args.to_index,
+                             context_window=args.with_context or 0)
     pages = []
     for result in results:
         hits = result["hits"]
@@ -1869,6 +1990,9 @@ def cmd_search(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
         payload = items[0] if len(items) == 1 else {"queries": items}
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
+        shown_zero_advice = False
+        shown_reasoning_advice = False
+        shown_no_compactions = False
         for n, (result, page, stored, display_total) in enumerate(pages, 1):
             meta = result["meta"]
             if len(queries) > 1:
@@ -1876,10 +2000,11 @@ def cmd_search(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
             shown_from = args.offset + 1 if page else 0
             shown_to = args.offset + len(page) if page else 0
             print(f"hits {display_total} (shown {shown_from}..{shown_to})")
-            if display_total == 0:
+            if display_total == 0 and not shown_zero_advice:
                 print("  note: 0 hits — first retry without --roles/--fields, "
                       "then a shorter stem or --regex")
                 print("  note: if 0 is expected (term absent), no --note is needed")
+                shown_zero_advice = True
             for h in page:
                 when = stamp(h["time"])
                 if args.before_compaction:
@@ -1892,8 +2017,21 @@ def cmd_search(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
                 print(f"  #{h['idx']} {mid} {when} {h['role']:<9} "
                       f"[{h['field']}]{mark}")
                 print(f"    {h['snippet']}")
-            if page and not fields and any(h["field"] == "reasoning" for h in page):
+                if args.with_context:
+                    neighbors = (h.get("context_before", [])
+                                 + h.get("context_after", []))
+                    if neighbors:
+                        print("    context:")
+                        for cidx, cmsg in neighbors:
+                            block = format_message(cidx, cmsg,
+                                                   max_chars=args.max_chars,
+                                                   only=only)
+                            for line in block.splitlines():
+                                print(f"      {line}")
+            if page and not fields and not shown_reasoning_advice and any(
+                    h["field"] == "reasoning" for h in page):
                 print("  note: some hits are in reasoning — add --fields text for the answer")
+                shown_reasoning_advice = True
             if page:
                 print(f"  dump: --dump --from-index {page[0]['idx']} --count 3")
             if not page and display_total > 0 and args.offset >= stored:
@@ -1908,8 +2046,9 @@ def cmd_search(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
                 elif stored < display_total:
                     print(f"  note: showing the first {stored} of {display_total} "
                           f"matches — narrow the query for more")
-            if args.before_tail and meta["last_compaction"] is None:
+            if args.before_tail and meta["last_compaction"] is None and not shown_no_compactions:
                 print("  note: в экспорте нет компакций — --before-tail ничего не отсекает")
+                shown_no_compactions = True
             if n < len(pages):
                 print()
     return 0, extra
@@ -2001,15 +2140,18 @@ def cmd_summary_grep(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
     if "|" in term and not args.regex:
         print("  note: summary-grep treats the term literally; "
               "add --regex for alternation", file=sys.stderr)
-    matched = summary_grep(text, term, args.regex, args.case)
-    extra = {"chars": len(text), "matches": len(matched)}
+    matched = summary_grep(text, term, args.regex, args.case, args.exclude_paths)
+    extra = {"chars": len(text), "matches": len(matched),
+             "exclude_paths": bool(args.exclude_paths)}
     if args.json:
         print(json.dumps({"summary": number, "query": term, "count": len(matched),
+                          "exclude_paths": bool(args.exclude_paths),
                           "matches": [{"line": n, "text": line}
                                       for n, line in matched]},
                          ensure_ascii=False, indent=2))
     else:
-        print(f"summary {number}: {len(matched)} matching lines")
+        suffix = " (paths excluded)" if args.exclude_paths else ""
+        print(f"summary {number}: {len(matched)} matching lines{suffix}")
         for n, line in matched:
             print(f"{n:4} {line}")
     return 0, extra
@@ -2056,7 +2198,7 @@ def cmd_overview(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     else:
-        print(human(summary))
+        print(human(summary, brief=args.brief))
     return 0, extra
 
 def dispatch(path: Path, args: argparse.Namespace) -> tuple[int, dict]:

@@ -70,25 +70,32 @@ EXPORT=/path/to/session.json
 
 ```bash
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --compactions
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --brief
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --show-summary 2
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --summary-outline 2
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --summary-grep 2 "решение" --exclude-paths
 ```
 
-Если `--compactions` ничего не выводит, компакций в сессии не было.
+Если `--compactions` ничего не выводит, компакций в сессии не было. `--brief`
+оставляет метаданные, счётчики сообщений, карту компакций и предупреждения;
+таблицы cost/model/tool опускаются. `--exclude-paths` пропускает строки сводки,
+где все совпадения находятся внутри path-подобного токена.
 
 Поиск по истории:
 
 ```bash
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "решение" --before-tail
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "решение" --from-index 100 --to-index 300
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "решение" --with-context 2
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "0\.2\.1-rc" --regex --before-tail
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "правило,решение,отклонённый вариант" --before-tail
 ```
 
 `--before-tail` оставляет только сообщения, выпавшие после последней
 компакции; `--from-index`/`--to-index` ограничивают поиск включительным
-диапазоном индексов сообщений. `--queries` ищет точные строки; несколько regex-шаблонов задаются
-через `--queries-file`.
+диапазоном индексов сообщений. `--with-context N` печатает N сообщений вокруг
+каждого хита; с `--json` не сочетается. `--queries` ищет точные строки;
+несколько regex-шаблонов задаются через `--queries-file`.
 
 Если одного попадания недостаточно, посмотри соседние сообщения:
 
