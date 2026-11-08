@@ -1,0 +1,179 @@
+{
+  "info": {
+    "id": "ses_fixture",
+    "title": "fixture multiple-compactions",
+    "directory": "fixture/project",
+    "agent": "build",
+    "version": "1.19.5",
+    "time": {
+      "created": 1700000000000,
+      "updated": 1700000009000
+    },
+    "cost": 0
+  },
+  "messages": [
+    {
+      "info": {
+        "id": "m0",
+        "role": "user",
+        "time": {
+          "created": 1700000000000
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "First lost fact: SQLite."
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "tail1",
+        "role": "user",
+        "time": {
+          "created": 1700000000100
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "First retained tail."
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "c1",
+        "role": "user",
+        "time": {
+          "created": 1700000000200
+        }
+      },
+      "parts": [
+        {
+          "type": "compaction",
+          "auto": true,
+          "tail_start_id": "tail1"
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "s1",
+        "role": "assistant",
+        "time": {
+          "created": 1700000000300
+        },
+        "cost": 0,
+        "tokens": {},
+        "modelID": "fixture-model",
+        "providerID": "fixture-provider",
+        "finish": "stop",
+        "mode": "compaction"
+      },
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "text",
+          "text": "## Summary\nFirst compaction kept SQLite."
+        },
+        {
+          "type": "step-finish",
+          "cost": 0
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "m4",
+        "role": "user",
+        "time": {
+          "created": 1700000000400
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Second lost fact: Postgres was rejected."
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "tail2",
+        "role": "user",
+        "time": {
+          "created": 1700000000500
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Second retained tail."
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "c2",
+        "role": "user",
+        "time": {
+          "created": 1700000000600
+        }
+      },
+      "parts": [
+        {
+          "type": "compaction",
+          "auto": true,
+          "tail_start_id": "tail2"
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "s2",
+        "role": "assistant",
+        "time": {
+          "created": 1700000000700
+        },
+        "cost": 0,
+        "tokens": {},
+        "modelID": "fixture-model",
+        "providerID": "fixture-provider",
+        "finish": "stop",
+        "mode": "compaction"
+      },
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "text",
+          "text": "## Summary\nSecond compaction kept the tail."
+        },
+        {
+          "type": "step-finish",
+          "cost": 0
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "m8",
+        "role": "user",
+        "time": {
+          "created": 1700000000800
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "After the second compaction."
+        }
+      ]
+    }
+  ]
+}

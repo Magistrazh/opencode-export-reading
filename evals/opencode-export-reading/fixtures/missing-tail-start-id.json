@@ -1,0 +1,90 @@
+{
+  "info": {
+    "id": "ses_fixture",
+    "title": "fixture missing-tail-start-id",
+    "directory": "fixture/project",
+    "agent": "build",
+    "version": "1.19.5",
+    "time": {
+      "created": 1700000000000,
+      "updated": 1700000009000
+    },
+    "cost": 0
+  },
+  "messages": [
+    {
+      "info": {
+        "id": "m0",
+        "role": "user",
+        "time": {
+          "created": 1700000000000
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Lost fact: use SQLite."
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "tail1",
+        "role": "user",
+        "time": {
+          "created": 1700000000100
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Retained tail."
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "c1",
+        "role": "user",
+        "time": {
+          "created": 1700000000200
+        }
+      },
+      "parts": [
+        {
+          "type": "compaction",
+          "auto": true,
+          "tail_start_id": "missing-id"
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "s1",
+        "role": "assistant",
+        "time": {
+          "created": 1700000000300
+        },
+        "cost": 0,
+        "tokens": {},
+        "modelID": "fixture-model",
+        "providerID": "fixture-provider",
+        "finish": "stop",
+        "mode": "compaction"
+      },
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "text",
+          "text": "## Summary\nA summary with a broken boundary."
+        },
+        {
+          "type": "step-finish",
+          "cost": 0
+        }
+      ]
+    }
+  ]
+}

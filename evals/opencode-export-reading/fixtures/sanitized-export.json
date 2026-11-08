@@ -1,0 +1,58 @@
+{
+  "info": {
+    "id": "ses_fixture",
+    "title": "[redacted:session-title:ses_fixture]",
+    "directory": "[redacted:directory:/fixture]",
+    "agent": "build",
+    "version": "1.19.5",
+    "time": {
+      "created": 1700000000000,
+      "updated": 1700000009000
+    },
+    "cost": 0
+  },
+  "messages": [
+    {
+      "info": {
+        "id": "m0",
+        "role": "user",
+        "time": {
+          "created": 1700000000000
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "[redacted:text:prt_fixture]"
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "m1",
+        "role": "assistant",
+        "time": {
+          "created": 1700000000100
+        },
+        "cost": 0,
+        "tokens": {},
+        "modelID": "fixture-model",
+        "providerID": "fixture-provider",
+        "finish": "stop"
+      },
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "text",
+          "text": "[redacted:text:prt_fixture]"
+        },
+        {
+          "type": "step-finish",
+          "cost": 0
+        }
+      ]
+    }
+  ]
+}

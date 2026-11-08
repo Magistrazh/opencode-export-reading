@@ -1,0 +1,40 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12", "3.14"]
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install lint tool
+        run: python -m pip install "ruff==0.16.10"
+      - name: Self-tests and fixtures
+        shell: bash
+        run: |
+          python scripts/inspect-export.py --selftest
+          python scripts/feedback.py --selftest
+          python scripts/validate.py --selftest
+          python scripts/validate.py
+          python evals/opencode-export-reading/score-trigger.py --selftest
+          python evals/opencode-export-reading/score-trigger.py --validate
+          bash evals/opencode-export-reading/run-trigger.sh --dry-run
+          python evals/opencode-export-reading/run-golden.py --selftest
+          python evals/opencode-export-reading/run-golden.py
+          ruff check --no-cache scripts evals
+          python -m py_compile scripts/inspect-export.py scripts/feedback.py scripts/validate.py evals/opencode-export-reading/score-trigger.py evals/opencode-export-reading/run-golden.py

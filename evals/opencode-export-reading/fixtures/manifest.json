@@ -1,0 +1,98 @@
+{
+  "normal-compaction": {
+    "purpose": "one compaction with a lost decision and a retained tail",
+    "messages": 5,
+    "compactions": 1,
+    "summary_state": "present",
+    "search": {
+      "query": "SQLite",
+      "before_tail_hits": 1
+    },
+    "exit_codes": {
+      "timeline": 0,
+      "before_tail": 0,
+      "show_summary": 0,
+      "dump": 0
+    }
+  },
+  "missing-tail-start-id": {
+    "purpose": "compaction whose tail_start_id cannot be resolved",
+    "messages": 4,
+    "compactions": 1,
+    "summary_state": "present",
+    "search": {
+      "query": "SQLite",
+      "before_tail_hits": null
+    },
+    "exit_codes": {
+      "timeline": 0,
+      "before_tail": 1,
+      "show_summary": 0,
+      "dump": 0
+    }
+  },
+  "empty-summary": {
+    "purpose": "compaction event with an empty summary",
+    "messages": 4,
+    "compactions": 1,
+    "summary_state": "empty",
+    "search": {
+      "query": "SQLite",
+      "before_tail_hits": 1
+    },
+    "exit_codes": {
+      "timeline": 0,
+      "before_tail": 0,
+      "show_summary": 0,
+      "dump": 0
+    }
+  },
+  "multiple-compactions": {
+    "purpose": "two compactions; the last boundary is authoritative",
+    "messages": 9,
+    "compactions": 2,
+    "summary_state": "two present",
+    "search": {
+      "query": "lost",
+      "before_tail_hits": 2
+    },
+    "exit_codes": {
+      "timeline": 0,
+      "before_tail": 0,
+      "show_summary": 0,
+      "dump": 0
+    }
+  },
+  "huge-tool-output": {
+    "purpose": "one very large tool output for max-chars/truncation",
+    "messages": 2,
+    "compactions": 0,
+    "summary_state": "none",
+    "search": {
+      "query": "Tool",
+      "before_tail_hits": null
+    },
+    "exit_codes": {
+      "timeline": 0,
+      "before_tail": 1,
+      "show_summary": 1,
+      "dump": 0
+    }
+  },
+  "sanitized-export": {
+    "purpose": "redacted text with structure retained",
+    "messages": 2,
+    "compactions": 0,
+    "summary_state": "none",
+    "search": {
+      "query": "redacted",
+      "before_tail_hits": null
+    },
+    "exit_codes": {
+      "timeline": 0,
+      "before_tail": 1,
+      "show_summary": 1,
+      "dump": 0
+    }
+  }
+}

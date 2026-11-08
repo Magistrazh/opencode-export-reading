@@ -1,0 +1,8 @@
+{
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "agent": "build",
+  "repetitions": 2,
+  "stamp": "baseline-0.8.11",
+  "date": "2026-11-07T17:03:03Z",
+  "opencode_version": "1.19.5"
+}

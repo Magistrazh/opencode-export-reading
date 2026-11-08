@@ -1,0 +1,25 @@
+id	expect	language	category	prompt
+trig-01	yes	en	decision-before-compaction	What did we decide before the last compaction in this project? Recover the decision from the session export and give message ids.
+trig-02	yes	en	open-export	Open exports/example.json and recover the decision that was lost to compaction.
+trig-03	yes	en	command-recall	Find the exact command we used before compaction to restart the service and quote it with the message id.
+trig-04	yes	en	lost-rule	Which rule was established earlier in this session but is missing from the current context? Recover it from the full history.
+trig-05	yes	en	version-recall	What version did we settle on before compaction? Find the original message, not the summary.
+trig-06	yes	en	rejected-option	Which option did we reject before compaction, and why? Recover the reasoning from the export.
+trig-07	yes	ru	decision-before-compaction	Что мы решили до последней компакции? Найди в истории экспорта, не в сводке.
+trig-08	yes	ru	lost-rule	Какое правило установили раньше, и оно потерялось после сжатия? Восстанови по полной истории.
+trig-09	yes	ru	command-recall	Найди команду, которую использовали до компакта, и процитируй её с id сообщения.
+trig-10	yes	ru	open-export	Открой exports/example.json и восстанови решение, которое срезала компакция.
+trig-11	yes	en	restore-context	Restore the context that was compacted away: find the decision and its evidence in the export.
+trig-12	yes	en	summary-vs-history	Check the last summary against the full history: what did the summary omit or misattribute?
+trig-13	no	en	compaction-concept	Explain what compaction means in OpenCode in one sentence.
+trig-14	no	en	summarize-readme	Summarize README.md.
+trig-15	no	en	write-code	Write a Python function that parses JSON.
+trig-16	no	en	install-plugin	How do I install a plugin in opencode.json?
+trig-17	no	en	node-version	What is the current version of Node.js?
+trig-18	no	en	git-log	Show me the git log for this repository.
+trig-19	no	en	session-cost	How much did this session cost? Answer from the current context if possible.
+trig-20	no	en	list-exports	List the files in exports/.
+trig-21	no	ru	compaction-concept	Что такое компакция в OpenCode?
+trig-22	no	ru	summarize-readme	Суммируй README проекта.
+trig-23	no	ru	write-code	Напиши скрипт на Python для разбора JSON.
+trig-24	no	ru	session-cost	Сколько стоит эта сессия?
