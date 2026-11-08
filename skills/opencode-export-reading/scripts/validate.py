@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Structural validator for the opencode-export-reading skill.
 
-Run from the skill directory or anywhere:
-    python scripts/validate.py
-    python scripts/validate.py --selftest
+Run from the repository root or anywhere:
+    python skills/opencode-export-reading/scripts/validate.py
+    python skills/opencode-export-reading/scripts/validate.py --selftest
 
 No third-party packages. No new user-facing skill flags: this script is an
 internal release gate.
@@ -29,16 +29,15 @@ def _utf8_stdio() -> None:
 
 _utf8_stdio()
 
-SKILL_DIR = Path(__file__).resolve().parents[1]
+SKILL_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = SKILL_ROOT.parents[1]
+SKILL_REL = Path("skills") / SKILL_ROOT.name
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 KEBAB = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 FRONTMATTER = {"name", "description", "version", "license", "compatibility",
                "metadata", "allowed-tools", "allowed_tools"}
-REQUIRED = [
-    "scripts/inspect-export.py",
-    "scripts/feedback.py",
-    "references/schema.md",
+REQUIRED_REPO = [
     "README.md",
     "README.ru.md",
     "CHANGES.md",
@@ -47,6 +46,13 @@ REQUIRED = [
     "CONTRIBUTING.md",
     ".github/workflows/ci.yml",
     "ruff.toml",
+]
+REQUIRED_SKILL = [
+    "SKILL.md",
+    "scripts/inspect-export.py",
+    "scripts/feedback.py",
+    "scripts/validate.py",
+    "references/schema.md",
 ]
 EVAL_REQUIRED = [
     "evals/opencode-export-reading/trigger.tsv",
@@ -75,12 +81,13 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     return data
 
 
-def validate(root: Path = SKILL_DIR) -> tuple[list[str], list[str]]:
+def validate(root: Path = REPO_ROOT) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
-    skill_md = root / "SKILL.md"
+    skill_root = root / SKILL_REL
+    skill_md = skill_root / "SKILL.md"
     if not skill_md.exists():
-        return ["SKILL.md missing"], warnings
+        return [f"{SKILL_REL}/SKILL.md missing"], warnings
     text = skill_md.read_text(encoding="utf-8", errors="replace")
     meta = parse_frontmatter(text)
     if not meta:
@@ -94,8 +101,8 @@ def validate(root: Path = SKILL_DIR) -> tuple[list[str], list[str]]:
     name = meta.get("name", "")
     if name and not KEBAB.match(name):
         errors.append(f"name is not kebab-case: {name!r}")
-    if name and name != root.name:
-        warnings.append(f"name {name!r} != folder {root.name!r} (clone folder may be renamed)")
+    if name and name != skill_root.name:
+        warnings.append(f"name {name!r} != folder {skill_root.name!r} (clone folder may be renamed)")
     description = meta.get("description", "")
     if len(description) > 1024:
         warnings.append(f"description is {len(description)} chars (soft max 1024)")
@@ -114,9 +121,13 @@ def validate(root: Path = SKILL_DIR) -> tuple[list[str], list[str]]:
     if lines > 500 or size > 40_000:
         errors.append(f"SKILL.md is {lines} lines / {size} bytes (hard max 500 / 40 KB)")
 
-    for rel in REQUIRED:
+    for rel in REQUIRED_REPO:
         if not (root / rel).exists():
             errors.append(f"required path missing: {rel}")
+
+    for rel in REQUIRED_SKILL:
+        if not (skill_root / rel).exists():
+            errors.append(f"required skill path missing: {rel}")
 
     for rel in EVAL_REQUIRED:
         if not (root / rel).exists():
@@ -152,15 +163,15 @@ def print_result(label: str, errors: list[str], warnings: list[str]) -> bool:
     return not errors
 
 
-def copy_skill(dst: Path) -> None:
-    shutil.copytree(SKILL_DIR, dst, dirs_exist_ok=True,
+def copy_repo(dst: Path) -> None:
+    shutil.copytree(REPO_ROOT, dst, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("__pycache__", "node_modules", ".tmp",
                                                   "runs", ".ruff_cache", ".pytest_cache",
                                                   "_tmp-feedback", ".git"))
 
 
 def mutate_skill(root: Path, change: str) -> None:
-    md = root / "SKILL.md"
+    md = root / SKILL_REL / "SKILL.md"
     text = md.read_text(encoding="utf-8")
     if change == "bad-name":
         text = re.sub(r"^name:.*$", "name: Wrong_Name", text, count=1, flags=re.MULTILINE)
@@ -188,18 +199,18 @@ def selftest() -> int:
             failed += 1
 
     with tempfile.TemporaryDirectory() as td:
-        base = Path(td) / "valid" / "opencode-export-reading"
-        copy_skill(base)
+        base = Path(td) / "valid" / "repo"
+        copy_repo(base)
         errors, _warnings = validate(base)
         ok(not errors, "valid copy passes")
         for change in ("bad-name", "bad-version", "no-description", "oversized",
                        "broken-link"):
-            case = Path(td) / change / "opencode-export-reading"
+            case = Path(td) / change / "repo"
             shutil.copytree(base, case)
             mutate_skill(case, change)
             errs, _ = validate(case)
             ok(bool(errs), f"validator fails on {change}")
-        case = Path(td) / "forbidden-case" / "opencode-export-reading"
+        case = Path(td) / "forbidden-case" / "repo"
         shutil.copytree(base, case)
         (case / "__pycache__").mkdir()
         (case / "__pycache__" / "x.pyc").write_text("x", encoding="utf-8")
@@ -216,7 +227,7 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
     if args.selftest:
         return selftest()
-    errors, warnings = validate(SKILL_DIR)
+    errors, warnings = validate(REPO_ROOT)
     return 0 if print_result("opencode-export-reading", errors, warnings) else 1
 
 

@@ -2,6 +2,8 @@
 
 [Русская версия](README.ru.md)
 
+[![skills.sh](https://skills.sh/b/Magistrazh/opencode-export-reading)](https://skills.sh/Magistrazh/opencode-export-reading)
+
 OpenCode compaction leaves a summary in the live context and drops the messages
 before `tail_start_id`. The session export still contains them. This tool reads
 that export locally and prints the lost messages with their ids.
@@ -19,18 +21,21 @@ cd opencode-export-reading
 
 # Linux / macOS
 mkdir -p ~/.config/opencode/skills
-ln -s "$PWD" ~/.config/opencode/skills/opencode-export-reading
+ln -s "$PWD/skills/opencode-export-reading" ~/.config/opencode/skills/opencode-export-reading
 ```
 
-On Windows, create the skills directory and then copy the repo or create a
-symlink in Developer Mode:
+On Windows, create the skills directory and then copy the skill folder or
+create a symlink in Developer Mode:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path "$HOME\.config\opencode\skills" | Out-Null
 New-Item -ItemType SymbolicLink `
   -Path "$HOME\.config\opencode\skills\opencode-export-reading" `
-  -Target (Get-Location)
+  -Target (Join-Path (Get-Location) "skills\opencode-export-reading")
 ```
+
+The skill itself lives in `skills/opencode-export-reading/`; the repository
+root holds docs, evals and CI.
 
 Restart OpenCode after changing the skill directory. The command examples use
 Bash; on Windows, run them in Git Bash or use `$env:SKILL_DIR` in PowerShell.
@@ -120,9 +125,9 @@ place for them.
 ## Tests
 
 ```bash
-python scripts/inspect-export.py --selftest
-python scripts/feedback.py --selftest
-python scripts/validate.py --selftest
+python skills/opencode-export-reading/scripts/inspect-export.py --selftest
+python skills/opencode-export-reading/scripts/feedback.py --selftest
+python skills/opencode-export-reading/scripts/validate.py --selftest
 python evals/opencode-export-reading/run-golden.py
 ```
 
@@ -141,10 +146,10 @@ STAMP=local RUNS=2 bash evals/opencode-export-reading/run-trigger.sh
 
 ## Files
 
-- `scripts/inspect-export.py` — export parser and CLI
-- `scripts/feedback.py` — local feedback records
-- `scripts/validate.py` — repository checks
-- `references/schema.md` — export fields used by the parser
+- `skills/opencode-export-reading/scripts/inspect-export.py` — export parser and CLI
+- `skills/opencode-export-reading/scripts/feedback.py` — local feedback records
+- `skills/opencode-export-reading/scripts/validate.py` — repository checks
+- `skills/opencode-export-reading/references/schema.md` — export fields used by the parser
 - [CHANGES.md](CHANGES.md) — release history
 - [evals/opencode-export-reading/README.md](evals/opencode-export-reading/README.md) — eval harness
 

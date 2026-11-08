@@ -1,5 +1,15 @@
 # Changes
 
+## 0.13.0
+
+- Repository layout: the skill payload (`SKILL.md`, `scripts/`, `references/`)
+  moved to `skills/opencode-export-reading/`; docs, evals and CI stay at the
+  repository root. This matches the `skills/*/SKILL.md` discovery used by
+  `gh skill publish` and skills.sh.
+- Install instructions now link `skills/opencode-export-reading` into the
+  OpenCode skills directory.
+- Added the skills.sh install badge to both READMEs.
+
 ## 0.12.0
 
 - `--search` and `--queries` accept `--from-index`/`--to-index` to limit hits to

@@ -27,14 +27,14 @@ jobs:
       - name: Self-tests and fixtures
         shell: bash
         run: |
-          python scripts/inspect-export.py --selftest
-          python scripts/feedback.py --selftest
-          python scripts/validate.py --selftest
-          python scripts/validate.py
+          python skills/opencode-export-reading/scripts/inspect-export.py --selftest
+          python skills/opencode-export-reading/scripts/feedback.py --selftest
+          python skills/opencode-export-reading/scripts/validate.py --selftest
+          python skills/opencode-export-reading/scripts/validate.py
           python evals/opencode-export-reading/score-trigger.py --selftest
           python evals/opencode-export-reading/score-trigger.py --validate
           bash evals/opencode-export-reading/run-trigger.sh --dry-run
           python evals/opencode-export-reading/run-golden.py --selftest
           python evals/opencode-export-reading/run-golden.py
-          ruff check --no-cache scripts evals
-          python -m py_compile scripts/inspect-export.py scripts/feedback.py scripts/validate.py evals/opencode-export-reading/score-trigger.py evals/opencode-export-reading/run-golden.py
+          ruff check --no-cache skills evals
+          python -m py_compile skills/opencode-export-reading/scripts/inspect-export.py skills/opencode-export-reading/scripts/feedback.py skills/opencode-export-reading/scripts/validate.py evals/opencode-export-reading/score-trigger.py evals/opencode-export-reading/run-golden.py

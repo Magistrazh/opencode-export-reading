@@ -2,6 +2,8 @@
 
 [English](README.md)
 
+[![skills.sh](https://skills.sh/b/Magistrazh/opencode-export-reading)](https://skills.sh/Magistrazh/opencode-export-reading)
+
 При компакции OpenCode в текущем контексте остаётся сводка, а сообщения до
 `tail_start_id` исчезают. В экспорте сессии они сохраняются. Этот инструмент
 читает экспорт локально и показывает сообщения, выпавшие из контекста, вместе
@@ -20,18 +22,21 @@ cd opencode-export-reading
 
 # Linux / macOS
 mkdir -p ~/.config/opencode/skills
-ln -s "$PWD" ~/.config/opencode/skills/opencode-export-reading
+ln -s "$PWD/skills/opencode-export-reading" ~/.config/opencode/skills/opencode-export-reading
 ```
 
-На Windows создай каталог скиллов, затем скопируй репозиторий или создай
+На Windows создай каталог скиллов, затем скопируй каталог скилла или создай
 символическую ссылку в режиме разработчика:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path "$HOME\.config\opencode\skills" | Out-Null
 New-Item -ItemType SymbolicLink `
   -Path "$HOME\.config\opencode\skills\opencode-export-reading" `
-  -Target (Get-Location)
+  -Target (Join-Path (Get-Location) "skills\opencode-export-reading")
 ```
+
+Сам скилл лежит в `skills/opencode-export-reading/`; в корне репозитория —
+документация, evals и CI.
 
 После изменения каталога скиллов перезапусти OpenCode. Примеры команд — для
 Bash; в Windows запускай их в Git Bash или используй `$env:SKILL_DIR` в
@@ -122,9 +127,9 @@ compactions, поиска, сводок и `--list-exports`.
 ## Тесты
 
 ```bash
-python scripts/inspect-export.py --selftest
-python scripts/feedback.py --selftest
-python scripts/validate.py --selftest
+python skills/opencode-export-reading/scripts/inspect-export.py --selftest
+python skills/opencode-export-reading/scripts/feedback.py --selftest
+python skills/opencode-export-reading/scripts/validate.py --selftest
 python evals/opencode-export-reading/run-golden.py
 ```
 
@@ -143,10 +148,10 @@ STAMP=local RUNS=2 bash evals/opencode-export-reading/run-trigger.sh
 
 ## Файлы
 
-- `scripts/inspect-export.py` — парсер экспорта и CLI
-- `scripts/feedback.py` — локальные записи отзывов
-- `scripts/validate.py` — проверка структуры репозитория
-- `references/schema.md` — поля экспорта, которые использует парсер
+- `skills/opencode-export-reading/scripts/inspect-export.py` — парсер экспорта и CLI
+- `skills/opencode-export-reading/scripts/feedback.py` — локальные записи отзывов
+- `skills/opencode-export-reading/scripts/validate.py` — проверка структуры репозитория
+- `skills/opencode-export-reading/references/schema.md` — поля экспорта, которые использует парсер
 - [CHANGES.md](CHANGES.md) — история релизов
 - [evals/opencode-export-reading/README.md](evals/opencode-export-reading/README.md) — набор проверок evals
 

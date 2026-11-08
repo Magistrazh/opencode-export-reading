@@ -43,7 +43,7 @@ python evals/opencode-export-reading/score-trigger.py \
   --compare evals/opencode-export-reading/baselines/trigger-0.8.11.tsv
 ```
 
-`run-golden.py` locates `scripts/inspect-export.py` in this repository and does not need an installed copy.
+`run-golden.py` locates `skills/opencode-export-reading/scripts/inspect-export.py` in this repository and does not need an installed copy.
 
 Gate: positive recall may drop by at most one case; negative false-positive
 rate must stay at or below 0.25. `--compare` also prints duration/token/cost
@@ -94,8 +94,8 @@ returns exit 1.
 Structural gate:
 
 ```bash
-python scripts/validate.py
-python scripts/validate.py --selftest
+python skills/opencode-export-reading/scripts/validate.py
+python skills/opencode-export-reading/scripts/validate.py --selftest
 ```
 
 ## Rules

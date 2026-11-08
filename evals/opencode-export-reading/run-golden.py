@@ -38,7 +38,8 @@ _utf8_stdio()
 ROOT = Path(__file__).resolve().parent
 FIXTURES = ROOT / "fixtures"
 MANIFEST = FIXTURES / "manifest.json"
-SKILL_ROOT = ROOT.parents[1]
+REPO_ROOT = ROOT.parents[1]
+SKILL_ROOT = REPO_ROOT / "skills" / ROOT.name
 FEEDBACK_TMP = Path(tempfile.mkdtemp(prefix="opencode-export-reading-golden-"))
 atexit.register(shutil.rmtree, FEEDBACK_TMP, ignore_errors=True)
 INSPECT = SKILL_ROOT / "scripts" / "inspect-export.py"

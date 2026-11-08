@@ -21,5 +21,5 @@ paths, tokens, and API keys. Treat every export as untrusted and sensitive.
 
 ## Supported versions
 
-Security fixes are applied to the current `0.10.x` line. Older versions are not
+Security fixes are applied to the current `0.13.x` line. Older versions are not
 supported.
