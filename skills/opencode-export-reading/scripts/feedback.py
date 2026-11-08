@@ -33,6 +33,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta
@@ -219,7 +220,8 @@ def load_triage(skill: str, root: Path | None = None) -> list[dict]:
         if not RECORD_ID_RE.match(str(event.get("record") or "")):
             continue
         events.append(event)
-    return sorted(events, key=lambda event: str(event.get("ts") or ""))
+    return sorted(events, key=lambda event: (str(event.get("ts") or ""),
+                                             int(event.get("seq") or 0)))
 
 
 def resolve_triage(events: list[dict]) -> dict[str, dict]:
@@ -268,10 +270,12 @@ def write_triage(args: argparse.Namespace) -> Path:
     entries = load_entries(args.skill, args.root)
     record_id = resolve_record_id(args.mark, entries)
     stamp = datetime.now().astimezone()
+    seq = time.time_ns()
     event = {
         "kind": "triage",
         "schema_version": SCHEMA_VERSION,
         "ts": stamp.isoformat(timespec="microseconds"),
+        "seq": seq,
         "skill": args.skill,
         "record": record_id,
         "status": status,
@@ -281,7 +285,7 @@ def write_triage(args: argparse.Namespace) -> Path:
     }
     folder = triage_dir(args.skill, args.root)
     folder.mkdir(parents=True, exist_ok=True)
-    name = f"{stamp.strftime('%Y-%m-%dT%H%M%S_%f')}_{uuid.uuid4().hex[:4]}.json"
+    name = f"{stamp.strftime('%Y-%m-%dT%H%M%S_%f')}_{seq}_{uuid.uuid4().hex[:4]}.json"
     path = folder / name
     path.write_text(json.dumps(event, ensure_ascii=False, indent=2) + "\n",
                     encoding="utf-8", newline="\n")
@@ -707,6 +711,17 @@ def selftest() -> int:
         with contextlib.redirect_stdout(buf):
             print_open("triage-skill", 0, tcase)
         ok(buf.getvalue() == "", "triage: --open 0 prints nothing")
+
+        same_ts = "2026-01-01T00:00:00+00:00"
+        for seq, status, name in ((1, "fixed", "z-old.json"), (2, "open", "a-new.json")):
+            (triage_dir("triage-skill", tcase) / name).write_text(
+                json.dumps({"kind": "triage", "schema_version": 1, "ts": same_ts,
+                            "seq": seq, "record": "2026-01-01T000002_cccc",
+                            "status": status, "reason": "same tick"}),
+                encoding="utf-8")
+        state = resolve_triage(load_triage("triage-skill", tcase))
+        ok(state["2026-01-01T000002_cccc"]["status"] == "open",
+           "triage: seq breaks same-timestamp ties")
 
     print(f"\n  PASS {checks - failed} | FAIL {failed}")
     return 0 if failed == 0 else 1

@@ -226,6 +226,8 @@ event per `record` wins, and a record without an event is open.
 |---|---|
 | `kind` | `triage` |
 | `schema_version` | `1` |
+| `ts` | event time; `seq` breaks ties when the clock ticks are equal |
+| `seq` | monotonic tie-breaker (`time.time_ns()`); older events default to `0` |
 | `record` | file stem of the feedback record; unique prefix accepted on input |
 | `status` | `fixed`, `accepted`, `duplicate`, `obsolete`, or `open` (reopen) |
 | `reason` | required: what was done and why |

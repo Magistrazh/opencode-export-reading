@@ -1,5 +1,11 @@
 # Changes
 
+## 0.13.2
+
+- Triage events carry a `seq` (`time.time_ns()`) and sort by `(ts, seq)`, so
+  two marks written in the same clock tick resolve deterministically. Fixes a
+  Windows CI flake in `feedback.py --selftest`.
+
 ## 0.13.1
 
 - Moved `validate.py` out of the skill payload to `scripts/` at the repository
