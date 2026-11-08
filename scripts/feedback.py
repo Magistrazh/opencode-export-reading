@@ -56,11 +56,14 @@ DEFAULT_ROOT = Path(
     os.environ.get("SKILL_FEEDBACK_DIR", Path.home() / ".local" / "share" / "opencode" / "skill-feedback")
 )
 SOLVED = ("yes", "partial", "no")
+TRIAGE_STATUSES = ("fixed", "accepted", "duplicate", "obsolete", "open")
 SCHEMA_VERSION = 1
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 SKILL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+RECORD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 LIMITS = {"task": 200, "problems": 300, "improve": 300, "extended": 2000,
-          "agent": 60, "modes": 120, "trigger": 60}
+          "agent": 60, "modes": 120, "trigger": 60, "reason": 300,
+          "release": 20, "commit": 40}
 SECRET_RE = re.compile(
     r"(sk-[A-Za-z0-9]{8,}"                      # OpenAI-style
     r"|gh[opsu]_[A-Za-z0-9]{20,}"                 # GitHub classic/oauth
@@ -174,17 +177,115 @@ def write_feedback(args: argparse.Namespace) -> Path | None:
     return path
 
 
-def load_records(skill: str, root: Path | None = None) -> list[dict]:
+def load_entries(skill: str, root: Path | None = None) -> list[tuple[str, dict]]:
+    """Feedback records with stable ids (file stems); triage/ is not a record."""
     folder = dest_dir(skill, root)
     if not folder.exists():
         return []
-    records = []
+    entries = []
     for path in sorted(folder.glob("*.json")):
         try:
-            records.append(json.loads(path.read_text(encoding="utf-8")))
+            record = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
-    return sorted(records, key=lambda r: r.get("ts", ""))
+        if isinstance(record, dict):
+            entries.append((path.stem, record))
+    return sorted(entries, key=lambda item: str(item[1].get("ts") or ""))
+
+
+def load_records(skill: str, root: Path | None = None) -> list[dict]:
+    return [record for _record_id, record in load_entries(skill, root)]
+
+
+def triage_dir(skill: str, root: Path | None = None) -> Path:
+    return dest_dir(skill, root) / "triage"
+
+
+def load_triage(skill: str, root: Path | None = None) -> list[dict]:
+    """Append-only triage events; invalid or corrupt files are skipped."""
+    folder = triage_dir(skill, root)
+    if not folder.exists():
+        return []
+    events = []
+    for path in sorted(folder.glob("*.json")):
+        try:
+            event = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(event, dict) or event.get("kind") != "triage":
+            continue
+        if event.get("status") not in TRIAGE_STATUSES:
+            continue
+        if not RECORD_ID_RE.match(str(event.get("record") or "")):
+            continue
+        events.append(event)
+    return sorted(events, key=lambda event: str(event.get("ts") or ""))
+
+
+def resolve_triage(events: list[dict]) -> dict[str, dict]:
+    """Last event per record wins; a record without an event is open."""
+    state: dict[str, dict] = {}
+    for event in events:
+        state[str(event["record"])] = event
+    return state
+
+
+def is_actionable(record: dict) -> bool:
+    """Only records that ask for a decision; clean 'yes' verdicts are noise."""
+    if record.get("kind") == "note":
+        return True
+    if record.get("kind") == "usage":
+        return False
+    return bool(record.get("problems") or record.get("improve")
+                or record.get("solved") != "yes")
+
+
+def resolve_record_id(value: str, entries: list[tuple[str, dict]]) -> str:
+    record_id = value.strip().removesuffix(".json")
+    if not record_id:
+        raise FeedbackError("id записи не может быть пустым")
+    known = [known_id for known_id, _record in entries]
+    if record_id in known:
+        return record_id
+    matches = [known_id for known_id in known if known_id.startswith(record_id)]
+    if not matches:
+        raise FeedbackError(f"нет записи с id {record_id!r}")
+    if len(matches) > 1:
+        shown = ", ".join(matches[:5])
+        raise FeedbackError(f"id {record_id!r} неоднозначен: {len(matches)} совпадений ({shown})")
+    return matches[0]
+
+
+def write_triage(args: argparse.Namespace) -> Path:
+    status = (args.mark_status or "").strip()
+    if status not in TRIAGE_STATUSES:
+        raise FeedbackError(f"--as: ожидалось одно из {TRIAGE_STATUSES}")
+    reason = clean(args.reason, "reason")
+    if not reason:
+        raise FeedbackError("--reason обязателен: что сделали и почему")
+    release = clean(args.release, "release")
+    commit = clean(args.commit, "commit")
+    entries = load_entries(args.skill, args.root)
+    record_id = resolve_record_id(args.mark, entries)
+    stamp = datetime.now().astimezone()
+    event = {
+        "kind": "triage",
+        "schema_version": SCHEMA_VERSION,
+        "ts": stamp.isoformat(timespec="microseconds"),
+        "skill": args.skill,
+        "record": record_id,
+        "status": status,
+        "reason": reason,
+        "release": release or None,
+        "commit": commit or None,
+    }
+    folder = triage_dir(args.skill, args.root)
+    folder.mkdir(parents=True, exist_ok=True)
+    name = f"{stamp.strftime('%Y-%m-%dT%H%M%S_%f')}_{uuid.uuid4().hex[:4]}.json"
+    path = folder / name
+    path.write_text(json.dumps(event, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8", newline="\n")
+    return path
 
 
 def load_usage(skill: str, root: Path | None = None) -> list[dict]:
@@ -251,10 +352,20 @@ def telemetry_summary(usage: list[dict]) -> dict:
 
 
 def stats(skill: str, root: Path | None = None) -> dict:
-    records = load_records(skill, root)
-    notes = [r for r in records if r.get("kind") == "note"]
-    quality = [r for r in records if r.get("kind") != "note"]
+    entries = load_entries(skill, root)
+    records = [record for _record_id, record in entries]
+    notes = [record for record in records if record.get("kind") == "note"]
+    quality = [record for record in records if record.get("kind") != "note"]
     usage = load_usage(skill, root)
+    events = load_triage(skill, root)
+    known = {record_id for record_id, _record in entries}
+    state = {record_id: event for record_id, event in resolve_triage(events).items()
+             if record_id in known}
+    actionable = [(record_id, record) for record_id, record in entries
+                  if is_actionable(record)]
+    open_ids = {record_id for record_id, _record in actionable
+                if state.get(record_id, {}).get("status") in (None, "open")}
+    status_counts = Counter(str(event.get("status")) for event in state.values())
     by_version: dict[str, Counter] = {}
     problems: Counter = Counter()
     improve: Counter = Counter()
@@ -281,6 +392,13 @@ def stats(skill: str, root: Path | None = None) -> dict:
         "usage_zero_hits": sum(1 for u in usage if u.get("zero_hits")),
         "usage_with_warnings": sum(1 for u in usage if u.get("warnings")),
         "usage_unverified": sum(int(u.get("unverified") or 0) for u in usage),
+        "triage_total": len(state),
+        "triage": {status: status_counts.get(status, 0) for status in TRIAGE_STATUSES},
+        "open_total": len(open_ids),
+        "open_notes": sum(1 for record_id, record in actionable
+                          if record_id in open_ids and record.get("kind") == "note"),
+        "open_verdicts": sum(1 for record_id, record in actionable
+                             if record_id in open_ids and record.get("kind") != "note"),
         "recent": [
             {"ts": r.get("ts"), "task": r.get("task"), "solved": r.get("solved"),
              "problems": r.get("problems"), "improve": r.get("improve")}
@@ -305,6 +423,15 @@ def print_stats(skill: str, root: Path | None = None) -> None:
         print(f"  friction: zero-hit searches {s['usage_zero_hits']}, "
               f"runs with warnings {s['usage_with_warnings']}, "
               f"unverified compactions {s['usage_unverified']}")
+    t = s["triage"]
+    if s["triage_total"]:
+        print(f"  triage: {s['triage_total']} events | fixed {t['fixed']}, "
+              f"accepted {t['accepted']}, duplicate {t['duplicate']}, "
+              f"obsolete {t['obsolete']} | open {s['open_total']} "
+              f"(notes {s['open_notes']}, verdicts {s['open_verdicts']})")
+    else:
+        print(f"  triage: no marks | open {s['open_total']} "
+              f"(notes {s['open_notes']}, verdicts {s['open_verdicts']})")
     for version, counts in s["by_version"].items():
         print(f"  version {version}: {counts}")
     if s["top_problems"]:
@@ -325,11 +452,43 @@ def print_stats(skill: str, root: Path | None = None) -> None:
 
 
 def list_records(skill: str, limit: int, root: Path | None = None) -> None:
-    records = load_records(skill, root)
     if limit <= 0:
         return
-    for r in records[-limit:]:
-        print(json.dumps(r, ensure_ascii=False))
+    entries = load_entries(skill, root)
+    state = resolve_triage(load_triage(skill, root))
+    for record_id, record in entries[-limit:]:
+        triage = state.get(record_id, {}).get("status")
+        if triage is None:
+            triage = "open" if is_actionable(record) else "-"
+        row = {"id": record_id, "triage": triage}
+        row.update(record)
+        print(json.dumps(row, ensure_ascii=False))
+
+
+def print_open(skill: str, limit: int, root: Path | None = None) -> None:
+    if limit <= 0:
+        return
+    entries = load_entries(skill, root)
+    state = resolve_triage(load_triage(skill, root))
+    pending = [(record_id, record) for record_id, record in entries
+               if is_actionable(record)
+               and state.get(record_id, {}).get("status") in (None, "open")]
+    notes = sum(1 for _record_id, record in pending if record.get("kind") == "note")
+    print(f"open {len(pending)} (notes {notes}, verdicts {len(pending) - notes}); "
+          f"showing {min(limit, len(pending))}")
+    for record_id, record in pending[:limit]:
+        kind = record.get("kind") or "?"
+        version = record.get("skill_version") or "?"
+        print(f"{record.get('ts')}  {kind}  v{version}")
+        print(f"  id: {record_id}")
+        if record.get("task"):
+            print(f"  task: {record['task']}")
+        if kind != "note" and record.get("solved"):
+            print(f"  solved: {record['solved']}")
+        if record.get("problems"):
+            print(f"  problems: {record['problems']}")
+        if record.get("improve"):
+            print(f"  improve: {record['improve']}")
 
 
 def selftest() -> int:
@@ -460,6 +619,95 @@ def selftest() -> int:
             list_records("test-skill", 0, root)
         ok(buf.getvalue() == "", "--list 0 не печатает записи")
 
+        # --- triage ledger: append-only, records stay immutable ---
+        tcase = Path(td) / "triage-case"
+        tdir = dest_dir("triage-skill", tcase)
+        tdir.mkdir(parents=True, exist_ok=True)
+
+        def put(record_id: str, payload: dict) -> None:
+            (tdir / f"{record_id}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        put("2026-01-01T000000_aaaa", {"kind": "note", "ts": "2026-01-01T00:00:00+00:00",
+                                       "skill_version": "0.10.1", "solved": "yes",
+                                       "problems": "0 hits", "task": "inspect via search"})
+        put("2026-01-01T000001_bbbb", {"kind": "suggestion", "ts": "2026-01-01T00:00:01+00:00",
+                                       "skill_version": "0.10.1", "solved": "yes",
+                                       "problems": "", "improve": "", "task": "clean yes"})
+        put("2026-01-01T000002_cccc", {"kind": "suggestion", "ts": "2026-01-01T00:00:02+00:00",
+                                       "skill_version": "0.10.1", "solved": "partial",
+                                       "problems": "missed", "improve": "add", "task": "partial"})
+
+        tstats = stats("triage-skill", tcase)
+        ok(tstats["total"] == 2 and tstats["notes_total"] == 1,
+           "triage: notes and verdicts counted separately")
+        ok(tstats["open_total"] == 2 and tstats["open_notes"] == 1
+           and tstats["open_verdicts"] == 1, "triage: clean yes is not actionable")
+        ok(resolve_record_id("2026-01-01T000002_cccc.json",
+                             load_entries("triage-skill", tcase)) == "2026-01-01T000002_cccc",
+           "triage: .json suffix accepted")
+
+        def mark_args(record: str, status: str, reason: str) -> argparse.Namespace:
+            return argparse.Namespace(skill="triage-skill", mark=record,
+                                      mark_status=status, reason=reason,
+                                      release="", commit="", root=tcase)
+
+        tpath = write_triage(mark_args("2026-01-01T000000", "fixed",
+                                       "fixed in 0.11.0"))
+        ok(tpath.exists(), "triage: event written")
+        tstats = stats("triage-skill", tcase)
+        ok(tstats["triage"]["fixed"] == 1 and tstats["open_total"] == 1,
+           "triage: fixed record leaves the queue")
+
+        write_triage(mark_args("2026-01-01T000000_aaaa", "accepted", "by design"))
+        state = resolve_triage(load_triage("triage-skill", tcase))
+        ok(state["2026-01-01T000000_aaaa"]["status"] == "accepted",
+           "triage: last event wins")
+
+        write_triage(mark_args("2026-01-01T000000_aaaa", "open", "reproduced again"))
+        ok(stats("triage-skill", tcase)["open_total"] == 2,
+           "triage: explicit open reopens")
+
+        raises(lambda: write_triage(mark_args("no-such-id", "fixed", "x")),
+               "triage: unknown id rejected")
+        raises(lambda: write_triage(mark_args("2026-01-01T00000", "fixed", "x")),
+               "triage: ambiguous prefix rejected")
+        raises(lambda: write_triage(mark_args("2026-01-01T000000", "done", "x")),
+               "triage: invalid status rejected")
+        raises(lambda: write_triage(mark_args("2026-01-01T000000", "fixed", "")),
+               "triage: empty reason rejected")
+        raises(lambda: write_triage(mark_args("2026-01-01T000000", "fixed",
+                                              "see C:\\temp\\x")),
+               "triage: path in reason rejected")
+
+        triage_dir("triage-skill", tcase).mkdir(parents=True, exist_ok=True)
+        (triage_dir("triage-skill", tcase) / "broken.json").write_text(
+            "{not json", encoding="utf-8")
+        (triage_dir("triage-skill", tcase) / "bad-status.json").write_text(
+            json.dumps({"kind": "triage", "record": "2026-01-01T000001_bbbb",
+                        "status": "done", "ts": "2026-01-01T00:00:03+00:00"}),
+            encoding="utf-8")
+        ok(len(load_triage("triage-skill", tcase)) == 3,
+           "triage: corrupt and invalid events ignored")
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            list_records("triage-skill", 10, tcase)
+        rows = [json.loads(line) for line in buf.getvalue().splitlines() if line.strip()]
+        ok(bool(rows) and rows[0]["id"] and rows[0]["triage"] in TRIAGE_STATUSES,
+           "triage: --list exposes id and status")
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            print_open("triage-skill", 10, tcase)
+        text = buf.getvalue()
+        ok("open 2" in text and "2026-01-01T000000_aaaa" in text,
+           "triage: --open lists the queue")
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            print_open("triage-skill", 0, tcase)
+        ok(buf.getvalue() == "", "triage: --open 0 prints nothing")
+
     print(f"\n  PASS {checks - failed} | FAIL {failed}")
     return 0 if failed == 0 else 1
 
@@ -484,16 +732,34 @@ def main(argv: list[str]) -> int:
                     help="подставить task/modes из последних usage-записей")
     ap.add_argument("--stats", action="store_true")
     ap.add_argument("--list", type=int, metavar="N")
+    ap.add_argument("--open", nargs="?", const=20, type=int, metavar="N",
+                    help="очередь непомеченных записей (по умолчанию 20)")
+    ap.add_argument("--mark", metavar="ID",
+                    help="пометить запись: id или уникальный префикс")
+    ap.add_argument("--as", dest="mark_status", default="",
+                    help="fixed|accepted|duplicate|obsolete|open")
+    ap.add_argument("--reason", default="", help="что сделали и почему")
+    ap.add_argument("--release", default="", help="версия, где исправлено")
+    ap.add_argument("--commit", default="", help="коммит с исправлением")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--root", type=Path, default=None, help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
     if args.selftest:
         return selftest()
+    modes = (args.stats, args.list is not None, args.open is not None,
+             args.mark is not None)
+    if sum(modes) > 1:
+        ap.error("--stats, --list, --open и --mark взаимоисключающие")
+    if args.mark is None and (args.mark_status or args.reason
+                              or args.release or args.commit):
+        ap.error("--as/--reason/--release/--commit работают только с --mark")
+    if args.mark is not None and not args.mark_status:
+        ap.error("--mark требует --as fixed|accepted|duplicate|obsolete|open")
     if not args.source_session_id:
         args.source_session_id = os.environ.get("OPENCODE_SESSION_ID", "")
     try:
-        if args.quick:
+        if args.quick and args.mark is None:
             defaults = quick_defaults(args.skill, args.root,
                                       source_session_id=args.source_session_id)
             if not defaults:
@@ -506,6 +772,11 @@ def main(argv: list[str]) -> int:
             print_stats(args.skill, args.root)
         elif args.list is not None:
             list_records(args.skill, args.list, args.root)
+        elif args.open is not None:
+            print_open(args.skill, args.open, args.root)
+        elif args.mark is not None:
+            path = write_triage(args)
+            print(f"ok: {path}")
         else:
             path = write_feedback(args)
             print(f"ok: {path}")

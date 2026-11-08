@@ -215,3 +215,22 @@ Feedback lives in `~/.local/share/opencode/skill-feedback/opencode-export-readin
 Legacy records may lack `schema_version`, `trigger`, telemetry or a non-empty
 `source_session_id`; readers must load them without error. Do not rename or
 remove existing fields.
+
+### Triage events
+
+Records are immutable. `feedback.py --mark` appends one event per action under
+`triage/` next to the records; the record file is never modified. The latest
+event per `record` wins, and a record without an event is open.
+
+| Field | Notes |
+|---|---|
+| `kind` | `triage` |
+| `schema_version` | `1` |
+| `record` | file stem of the feedback record; unique prefix accepted on input |
+| `status` | `fixed`, `accepted`, `duplicate`, `obsolete`, or `open` (reopen) |
+| `reason` | required: what was done and why |
+| `release`, `commit` | optional evidence |
+
+Only notes and verdicts with `problems`, `improve` or `solved != yes` are
+actionable; clean `yes` verdicts stay out of the `--open` queue. Corrupt or
+unknown events are ignored, so a broken file cannot take the ledger down.

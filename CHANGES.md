@@ -1,5 +1,17 @@
 # Changes
 
+## 0.11.0
+
+- `feedback.py`: append-only triage ledger next to feedback records
+  (`triage/<ts>_<uuid>.json`); the latest event per record wins, records stay
+  immutable.
+- `--mark ID --as fixed|accepted|duplicate|obsolete|open --reason ...` resolves
+  a record by id or unique prefix; `--release` and `--commit` add evidence.
+- `--open [N]` lists actionable unmarked records; `--list` exposes the record id
+  and triage status; `--stats` shows triage counts and the open queue.
+- Only notes and verdicts with problems, improve or `solved != yes` are
+  actionable; clean `yes` verdicts stay out of the queue.
+
 ## 0.10.1
 
 - Added `scripts/validate.py`: structural validator for frontmatter, version,

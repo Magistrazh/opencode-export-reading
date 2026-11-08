@@ -101,6 +101,10 @@ of `SKILL.md`, and result counters. Query text and transcript content are not
 stored. Set `SKILL_FEEDBACK_DIR` to use another location. Feedback
 verdicts written by `feedback.py` are optional and also stay local.
 
+Maintainer triage (`feedback.py --open`, `--mark`) is an append-only ledger
+under `triage/` next to the records: the latest event per record wins, and no
+record is ever rewritten.
+
 ## Limitations
 
 The tool only reads an export. It cannot put messages back into a live session

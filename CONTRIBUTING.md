@@ -33,6 +33,21 @@ python evals/opencode-export-reading/run-golden.py
   or `CONTRIBUTING.md`.
 - Update `CHANGES.md` and the version in `SKILL.md` for a release.
 
+## Feedback triage
+
+Feedback records are append-only and never rewritten. Maintainer decisions live
+in a separate ledger under `triage/`:
+
+```bash
+python scripts/feedback.py --stats
+python scripts/feedback.py --open 20
+python scripts/feedback.py --mark <id|prefix> --as fixed --reason "..." --release 0.11.0
+```
+
+`--open` lists actionable unmarked records only; clean `yes` verdicts are not
+actionable. Statuses: `fixed`, `accepted`, `duplicate`, `obsolete`, `open`
+(reopen). `--list` exposes each record's id and triage status.
+
 ## Reporting bugs
 
 Use a synthetic fixture or a redacted description. Never paste a real export.
