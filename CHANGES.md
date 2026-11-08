@@ -1,5 +1,12 @@
 # Changes
 
+## 0.13.3
+
+- `SKILL.md`: dedicated "Untrusted content" rules and a `SECURITY.md` section on
+  prompt injection through exports. Addresses Snyk W011 (medium): the exposure
+  is inherent to reading third-party session history; the rules make the data
+  vs instruction boundary explicit.
+
 ## 0.13.2
 
 - Triage events carry a `seq` (`time.time_ns()`) and sort by `(ts, seq)`, so

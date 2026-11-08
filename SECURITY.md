@@ -19,6 +19,15 @@ paths, tokens, and API keys. Treat every export as untrusted and sensitive.
   or keys into feedback fields.
 - Test fixtures in this repository are synthetic and must stay synthetic.
 
+## Prompt injection through exports
+
+An export is third-party content. It can contain text that looks like an
+instruction, a URL, or a command. The skill treats it as data: it never follows
+or executes export content, reads only the file the user named, quotes bounded
+slices, and reports suspicious content instead of acting on it. Static scanners
+flag this exposure (for example Snyk W011); it is inherent to reading session
+history and is mitigated by these rules, not by a scanner toggle.
+
 ## Supported versions
 
 Security fixes are applied to the current `0.13.x` line. Older versions are not
