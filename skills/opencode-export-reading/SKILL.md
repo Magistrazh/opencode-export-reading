@@ -80,6 +80,10 @@ Read the summary before searching: it says what you do **not** need to recover.
 `--show-summary N` prints the full text. Use the outline/grep when the full
 summary is too large.
 
+`--summary-diff A B` is a literal line diff. A regenerated summary rewrites
+most lines, so it shows structural change, not which facts were dropped; use
+`--search TERM --before-tail` for facts.
+
 ## 3. Search the full history
 
 ```bash
