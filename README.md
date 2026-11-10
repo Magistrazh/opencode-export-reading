@@ -2,7 +2,7 @@
 
 [Русская версия](README.ru.md)
 
-[![skills.sh](https://img.shields.io/badge/skills.sh-listed-blue)](https://skills.sh/magistrazh/opencode-export-reading)
+[![skills.sh](https://skills.sh/b/Magistrazh/opencode-export-reading)](https://skills.sh/Magistrazh/opencode-export-reading)
 
 OpenCode compaction leaves a summary in the live context and drops the messages
 before `tail_start_id`. The session export still contains them. This tool reads
