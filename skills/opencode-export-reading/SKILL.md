@@ -228,12 +228,6 @@ are omitted.
 | Read around a hit | `inspect "$EXPORT" --around N --window 2` |
 | Leave a verdict | `python "$SKILL_DIR/scripts/feedback.py" --quick --solved yes` |
 
-## More detail
+## Reference
 
-| Need | Read |
-|---|---|
-| Human overview, install, architecture, limits | [README](https://github.com/Magistrazh/opencode-export-reading/blob/main/README.md) / [README.ru](https://github.com/Magistrazh/opencode-export-reading/blob/main/README.ru.md) |
-| Exact export fields and optional values | `references/schema.md` |
-| Eval corpus, fixtures, benchmark format | [evals README](https://github.com/Magistrazh/opencode-export-reading/blob/main/evals/opencode-export-reading/README.md) |
-| Release history | [CHANGES](https://github.com/Magistrazh/opencode-export-reading/blob/main/CHANGES.md) |
-| Security and privacy | [SECURITY](https://github.com/Magistrazh/opencode-export-reading/blob/main/SECURITY.md) |
+Exact export fields and optional values: `references/schema.md`.

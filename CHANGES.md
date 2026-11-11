@@ -1,5 +1,11 @@
 # Changes
 
+## Unreleased
+
+- `SKILL.md` no longer links to repository-only docs (README, CHANGES,
+  SECURITY); the installed payload points only at bundled files. Network URLs
+  are not part of the skill contract.
+
 ## 0.15.0
 
 - `--search`/`--queries` accept `--since` and `--until`: exact ISO-8601 time
