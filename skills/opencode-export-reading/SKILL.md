@@ -1,6 +1,6 @@
 ---
 name: opencode-export-reading
-version: 0.15.0
+version: 0.15.1
 license: MIT
 description: Recover knowledge that compaction dropped from an OpenCode session by searching the full `opencode export` history instead of trusting the summary. Use whenever the user asks what we decided earlier, что было до компакта, что потерялось при сжатии, восстанови контекст, найди в старой истории, подтяни знания из экспорта; needs an old decision, command, version or caveat that is no longer in context; or opens any file produced by `opencode export`. Also use before quoting anything from an export. Never grep or read an export directly — the bundled script streams it.
 ---

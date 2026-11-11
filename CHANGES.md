@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.15.1
 
 - `SKILL.md` no longer links to repository-only docs (README, CHANGES,
   SECURITY); the installed payload points only at bundled files. Network URLs
