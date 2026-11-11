@@ -1,5 +1,20 @@
 # Changes
 
+## 0.15.0
+
+- `--search`/`--queries` accept `--since` and `--until`: exact ISO-8601 time
+  bounds, `--since` inclusive and `--until` exclusive; a bare date means local
+  00:00, so `--since 2026-11-11 --until 2026-11-12` covers exactly one day.
+- `--exclude-paths` now works for search as well as `--summary-grep`: matches
+  inside filesystem-path-like tokens are skipped, while URLs are kept.
+- `--counts` prints per-query totals and field distribution without snippets,
+  so a wide batch fits in one screen; `--json` remains for machine parsing.
+- `--with-context` prints a `dump:` hint for each shown hit, using that hit's
+  index, instead of one hint for the first hit on the page.
+- `SKILL.md` points to README/CHANGES/SECURITY by absolute GitHub URL, so the
+  installed payload no longer references files it does not contain; a running
+  tool-call warning is documented as an incomplete-live-export signal.
+
 ## 0.14.0
 
 - `--brief` overview: metadata, message counts, compaction map and warnings;

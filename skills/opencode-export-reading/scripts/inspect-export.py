@@ -575,7 +575,10 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
                    before_tail: bool = False,
                    from_index: int | None = None,
                    to_index: int | None = None,
-                   context_window: int = 0) -> list[dict]:
+                   context_window: int = 0,
+                   since_ms: int | None = None,
+                   until_ms: int | None = None,
+                   exclude_paths: bool = False) -> list[dict]:
     """Search several queries in one pass; each gets its own hits and meta."""
     if not queries or any(not q for q in queries):
         raise ExportError("пустой запрос: укажите строку или regex")
@@ -583,6 +586,7 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
     patterns = [re.compile(q if regex else re.escape(q), flags) for q in queries]
     hits_by: list[list[dict]] = [[] for _ in queries]
     totals = [0 for _ in queries]
+    field_totals: list[Counter] = [Counter() for _ in queries]
     recent: list[tuple[int, dict]] = []
     pending: list[dict] = []
     cap = max(limit * 10, 200)
@@ -647,25 +651,38 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
             return
         if to_index is not None and idx > to_index:
             return
+        created = (mi.get("time") or {}).get("created")
+        if since_ms is not None and (created is None or created < since_ms):
+            return
+        if until_ms is not None and (created is None or created >= until_ms):
+            return
         for qi, pattern in enumerate(patterns):
             for field, text in iter_fields(msg):
                 if fields and field not in fields:
                     continue
-                match = pattern.search(text or "")
-                if not match:
+                body = text or ""
+                match = None
+                for candidate in pattern.finditer(body):
+                    if exclude_paths and match_in_path_at(body, candidate.start(),
+                                                          candidate.end()):
+                        continue
+                    match = candidate
+                    break
+                if match is None:
                     continue
                 totals[qi] += 1
+                field_totals[qi][field] += 1
                 if len(hits_by[qi]) < cap:
                     start = max(0, match.start() - context)
-                    end = min(len(text), match.end() + context)
+                    end = min(len(body), match.end() + context)
                     hit = {
                         "idx": idx,
                         "id": mid,
-                        "time": (mi.get("time") or {}).get("created"),
+                        "time": created,
                         "role": role,
                         "model": mi.get("modelID"),
                         "field": field,
-                        "snippet": " ".join(text[start:end].split()),
+                        "snippet": " ".join(body[start:end].split()),
                     }
                     if context_window:
                         hit["context_before"] = before[-context_window:] if before else []
@@ -690,7 +707,7 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
                         else ("missing_tail" if (tail_id or last_event is not None)
                               else None))))
     results = []
-    for query, hits, total in zip(queries, hits_by, totals):
+    for qi, (query, hits, total) in enumerate(zip(queries, hits_by, totals)):
         for hit in hits:
             hit["before_last_compaction"] = (last_boundary is not None
                                              and hit["idx"] < last_boundary)
@@ -700,6 +717,7 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
         results.append({
             "query": query,
             "hits": hits,
+            "fields": dict(field_totals[qi].most_common()),
             "meta": {
                 "total": total,
                 "stored": len(hits),
@@ -721,13 +739,18 @@ def find_hits(path: Path, query: str, regex: bool = False, case: bool = False,
               before_tail: bool = False,
               from_index: int | None = None,
               to_index: int | None = None,
-              context_window: int = 0) -> tuple[list[dict], dict]:
+              context_window: int = 0,
+              since_ms: int | None = None,
+              until_ms: int | None = None,
+              exclude_paths: bool = False) -> tuple[list[dict], dict]:
     result = find_hits_many(path, [query], regex=regex, case=case, limit=limit,
                             context=context, roles=roles, fields=fields,
                             before_compaction=before_compaction,
                             before_tail=before_tail,
                             from_index=from_index, to_index=to_index,
-                            context_window=context_window)[0]
+                            context_window=context_window,
+                            since_ms=since_ms, until_ms=until_ms,
+                            exclude_paths=exclude_paths)[0]
     return result["hits"], result["meta"]
 
 
@@ -966,13 +989,25 @@ def summary_grep(text: str, query: str, regex: bool = False, case: bool = False,
 
 
 def match_in_path(line: str, start: int, end: int) -> bool:
-    """True when the match sits inside a path-like token (heuristic)."""
+    """True when the match sits inside a filesystem-path-like token."""
     for token in re.finditer(r"[^\s\"'`]+", line):
         if token.start() <= start and end <= token.end():
             text = token.group(0).strip("()[]{}<>,;:\"'`")
+            if "://" in text:
+                return False
             return ("/" in text or "\\" in text
                     or re.match(r"^[A-Za-z]:", text) is not None)
     return False
+
+
+def match_in_path_at(text: str, start: int, end: int) -> bool:
+    """match_in_path for a match inside a potentially multi-line field."""
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    if line_end == -1:
+        line_end = len(text)
+    return match_in_path(text[line_start:line_end],
+                         start - line_start, end - line_start)
 
 
 def summary_diff(a: str, b: str, label_a: str = "A", label_b: str = "B") -> list[str]:
@@ -992,6 +1027,24 @@ def local_dt(ms: int) -> datetime:
         return dt.astimezone()
     except (OSError, OverflowError):
         return dt
+
+
+def parse_time_bound(value: str) -> int:
+    """Parse an exact ISO-8601 instant; a bare date is local 00:00."""
+    raw = value.strip()
+    local = datetime.now().astimezone().tzinfo or timezone.utc
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            dt = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=local)
+        else:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=local)
+        return int(dt.timestamp() * 1000)
+    except (OSError, OverflowError, ValueError) as exc:
+        raise ExportError(
+            f"неверное время {value!r}: ожидается ISO 8601 "
+            "(YYYY-MM-DD или YYYY-MM-DDTHH:MM[:SS][Z|±HH:MM])") from exc
 
 
 def split_ref(value: str | None, index: int | None) -> tuple[str | None, int | None]:
@@ -1383,6 +1436,16 @@ def selftest() -> int:
         utf16.write_bytes(json.dumps(data, ensure_ascii=False).encode("utf-16"))
         ok(analyse_file(utf16)["messages"]["total"] == 3, "UTF-16 экспорт читается")
         ok(local_dt(10**22).year == 1970, "громадный timestamp не роняет CLI")
+        ok(parse_time_bound("1970-01-01T00:00:00Z") == 0,
+           "time bound: UTC instant parsed exactly")
+        ok(parse_time_bound("1970-01-01T00:00:01Z") == 1000,
+           "time bound: one second after epoch")
+        local_midnight = datetime(2026, 11, 11,
+                                  tzinfo=datetime.now().astimezone().tzinfo)
+        ok(parse_time_bound("2026-11-11") == int(local_midnight.timestamp() * 1000),
+           "time bound: bare date is local 00:00 exactly")
+        raises(lambda: parse_time_bound("not-a-date"),
+               "time bound: invalid value rejected")
         raises(lambda: find_hits(path, "hi", before_tail=True),
                "before-tail без компакций — отказ")
 
@@ -1508,8 +1571,8 @@ def selftest() -> int:
                      "https://example.com/alpha\n")
         ok(len(summary_grep(path_text, "alpha")) == 4,
            "summary grep: paths match by default")
-        ok([n for n, _ in summary_grep(path_text, "alpha", exclude_paths=True)] == [2, 3],
-           "summary grep: --exclude-paths skips path-only lines")
+        ok([n for n, _ in summary_grep(path_text, "alpha", exclude_paths=True)] == [2, 3, 4],
+           "summary grep: --exclude-paths skips filesystem paths, keeps URLs")
 
         ids_only = format_message(0, {"info": {"id": "m0", "role": "user",
                                                "time": {"created": 1}},
@@ -1565,6 +1628,30 @@ def selftest() -> int:
            "timeline: диапазон индексов окна")
         raises(lambda: find_hits(two_path, "x", before_compaction=3),
                "before-compaction: нет такой компакции — отказ")
+
+        pathsearch = Path(td) / "pathsearch.json"
+        pathsearch.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
+            {"info": {"id": "p0", "role": "user", "time": {"created": 0}},
+             "parts": [{"type": "text", "text": "see C:\\repo\\alpha.txt"}]},
+            {"info": {"id": "p1", "role": "user", "time": {"created": 1000}},
+             "parts": [{"type": "text", "text": "alpha rule"}]},
+            {"info": {"id": "p2", "role": "user", "time": {"created": 2000}},
+             "parts": [{"type": "text", "text": "/srv/alpha/app and alpha prose"}]},
+            {"info": {"id": "p3", "role": "user", "time": {"created": 3000}},
+             "parts": [{"type": "text", "text": "https://example.com/alpha"}]},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        all_path_hits, _ = find_hits(pathsearch, "alpha")
+        ok([h["idx"] for h in all_path_hits] == [0, 1, 2, 3],
+           "search: path-like matches count by default")
+        path_hits, _ = find_hits(pathsearch, "alpha", exclude_paths=True)
+        ok([h["idx"] for h in path_hits] == [1, 2, 3],
+           "search: --exclude-paths skips filesystem matches, keeps prose and URLs")
+        timed_hits, _ = find_hits(pathsearch, "alpha", since_ms=1000, until_ms=3000)
+        ok([h["idx"] for h in timed_hits] == [1, 2],
+           "search: since inclusive, until exclusive")
+        counted = find_hits_many(pathsearch, ["alpha", "missing"], exclude_paths=True)
+        ok(counted[0]["fields"] == {"text": 3} and counted[1]["fields"] == {},
+           "search: field distribution follows accepted hits")
 
         usage_root = Path(td) / "fb"
         rec = record_usage("timeline", path, 123, time.time(), root=usage_root)
@@ -1629,6 +1716,54 @@ def selftest() -> int:
         rc, _, _ = run_cli([str(comp), "--search", "SQLite",
                             "--with-context", "1", "--json"])
         ok(rc == 2, "CLI: --with-context + json rejected")
+        rc, out, _ = run_cli([str(pathsearch), "--search", "alpha",
+                              "--since", "1970-01-01T00:00:01Z",
+                              "--until", "1970-01-01T00:00:03Z"])
+        ok(rc == 0 and "hits 2" in out, "CLI: since inclusive, until exclusive")
+        rc, _, _ = run_cli([str(pathsearch), "--search", "alpha",
+                            "--since", "1970-01-01T00:00:03Z",
+                            "--until", "1970-01-01T00:00:01Z"])
+        ok(rc == 2, "CLI: --since later than --until rejected")
+        rc, _, _ = run_cli([str(pathsearch), "--search", "alpha",
+                            "--since", "not-a-date"])
+        ok(rc == 2, "CLI: invalid --since rejected")
+        rc, _, _ = run_cli([str(pathsearch), "--since", "1970-01-01"])
+        ok(rc == 2, "CLI: --since requires search")
+        rc, out, _ = run_cli([str(pathsearch), "--search", "alpha",
+                              "--exclude-paths"])
+        ok(rc == 0 and "hits 3" in out and "#0" not in out,
+           "CLI: search --exclude-paths skips filesystem matches")
+        rc, out, _ = run_cli([str(pathsearch), "--search", "alpha",
+                              "--exclude-paths", "--with-context", "1",
+                              "--limit", "2"])
+        ok(rc == 0 and out.count("dump:") == 2
+           and "from-index 1" in out and "from-index 2" in out,
+           "CLI: dump hint per hit in --with-context")
+        rc, out, _ = run_cli([str(pathsearch), "--search", "alpha",
+                              "--exclude-paths", "--limit", "1"])
+        ok(rc == 0 and out.count("dump:") == 1 and "from-index 1" in out,
+           "CLI: one dump hint for the visible page without context")
+        rc, out, _ = run_cli([str(pathsearch), "--queries", "alpha,missing",
+                              "--counts", "--exclude-paths"])
+        ok(rc == 0 and "query 1/2" in out and "3 hits" in out
+           and "fields: text=3" in out and "#1" not in out and "dump:" not in out,
+           "CLI: --counts is compact and reports fields")
+        rc, out, _ = run_cli([str(pathsearch), "--queries", "alpha,missing",
+                              "--counts", "--exclude-paths", "--json"])
+        counted_payload = json.loads(out)
+        ok(rc == 0 and counted_payload["queries"][0]["total"] == 3
+           and counted_payload["queries"][0]["fields"]["text"] == 3,
+           "CLI: --counts JSON")
+        rc, _, _ = run_cli([str(pathsearch), "--counts"])
+        ok(rc == 2, "CLI: --counts requires search")
+        rc, _, _ = run_cli([str(pathsearch), "--search", "alpha",
+                            "--counts", "--with-context", "1"])
+        ok(rc == 2, "CLI: --counts rejects --with-context")
+        rc, _, _ = run_cli([str(pathsearch), "--search", "alpha",
+                            "--counts", "--limit", "5"])
+        ok(rc == 2, "CLI: --counts rejects --limit")
+        rc, _, _ = run_cli([str(pathsearch), "--exclude-paths"])
+        ok(rc == 2, "CLI: --exclude-paths requires search or summary-grep")
         rc, out, _ = run_cli([str(comp), "--show-summary", "1", "--json"])
         ok(rc == 0 and json.loads(out)["summary"] == 1, "CLI: summary JSON")
         rc, out, _ = run_cli([str(comp), "--compactions", "--json"])
@@ -1710,8 +1845,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--brief", action="store_true",
                     help="overview без cost/model/tool-таблиц")
     ap.add_argument("--exclude-paths", action="store_true",
-                    help="только для --summary-grep: пропускать строки, где все "
-                         "совпадения внутри путей")
+                    help="--summary-grep/--search: пропускать совпадения внутри "
+                         "path-подобных токенов")
     ap.add_argument("--top", type=non_negative, default=5, help="сколько строк в каждом разборе")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--compactions", action="store_true", help="карта компакций")
@@ -1733,6 +1868,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--limit", type=positive, default=20, help="хитов на страницу")
     ap.add_argument("--with-context", type=positive, metavar="N",
                     help="search: N сообщений до/после каждого хита")
+    ap.add_argument("--counts", action="store_true",
+                    help="search: только счётчики по запросам и полям, без сниппетов")
+    ap.add_argument("--since", metavar="ISO",
+                    help="search: нижняя граница времени включительно; дата = локальные 00:00")
+    ap.add_argument("--until", metavar="ISO",
+                    help="search: верхняя граница времени исключительно; дата = локальные 00:00")
     ap.add_argument("--context", type=non_negative, default=80,
                     help="символов вокруг совпадения")
     ap.add_argument("--roles", default="", help="user,assistant")
@@ -1769,6 +1910,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    args.since_ms = None
+    args.until_ms = None
     if args.list_exports is not None:
         conflicts = any((
             args.files, args.search is not None, args.queries, args.queries_file,
@@ -1780,7 +1923,8 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
             args.to_index is not None, args.count, args.all,
             args.regex, args.case, args.offset, args.window != 2,
             args.max_chars != 3000, args.limit != 20, args.context != 80,
-            args.top != 5, args.brief,
+            args.top != 5, args.brief, args.counts,
+            args.since is not None, args.until is not None,
         ))
         if conflicts:
             ap.error("--list-exports не сочетается с файлами и другими режимами")
@@ -1793,6 +1937,7 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
             args.dump, args.around is not None, args.compactions,
             args.show_summary is not None, args.summary_diff,
             args.summary_outline is not None, args.summary_grep is not None,
+            args.counts, args.since is not None, args.until is not None,
         )):
             ap.error("--brief работает только с overview")
     if args.summary_grep is not None:
@@ -1802,8 +1947,10 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
             ap.error("--summary-grep: первое значение должно быть номером сводки")
         if number < 1:
             ap.error("--summary-grep: номер сводки должен быть >= 1")
-    if args.exclude_paths and args.summary_grep is None:
-        ap.error("--exclude-paths работает только с --summary-grep")
+    if args.exclude_paths and not (
+            args.summary_grep is not None or args.search is not None
+            or args.queries or args.queries_file):
+        ap.error("--exclude-paths работает только с --summary-grep/--search")
     if args.json and (args.dump or args.around is not None):
         ap.error("--json не поддерживается для --dump/--around: это текстовый вывод")
     if args.search is not None and (args.queries or args.queries_file):
@@ -1831,6 +1978,27 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
         ap.error("--with-context работает только с --search/--queries")
     if args.with_context is not None and args.json:
         ap.error("--with-context не сочетается с --json")
+    is_search = bool(args.search is not None or args.queries or args.queries_file)
+    if args.since is not None or args.until is not None:
+        if not is_search:
+            ap.error("--since/--until работают только с поиском")
+        try:
+            if args.since is not None:
+                args.since_ms = parse_time_bound(args.since)
+            if args.until is not None:
+                args.until_ms = parse_time_bound(args.until)
+        except ExportError as exc:
+            ap.error(str(exc))
+        if (args.since_ms is not None and args.until_ms is not None
+                and args.since_ms > args.until_ms):
+            ap.error("--since не может быть позже --until")
+    if args.counts:
+        if not is_search:
+            ap.error("--counts работает только с поиском")
+        if args.with_context is not None:
+            ap.error("--counts не сочетается с --with-context")
+        if args.offset or args.limit != 20:
+            ap.error("--counts не использует --offset/--limit")
     if args.only and not (args.dump or args.around is not None
                           or args.with_context is not None):
         ap.error("--only работает только с --dump/--around/--with-context")
@@ -1955,7 +2123,45 @@ def cmd_search(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
                              before_compaction=args.before_compaction,
                              before_tail=args.before_tail,
                              from_index=args.from_index, to_index=args.to_index,
-                             context_window=args.with_context or 0)
+                             context_window=args.with_context or 0,
+                             since_ms=args.since_ms, until_ms=args.until_ms,
+                             exclude_paths=args.exclude_paths)
+    if args.counts:
+        items = []
+        for result in results:
+            meta = result["meta"]
+            items.append({
+                "query": result["query"],
+                "total": meta["total"],
+                "stored": meta["stored"],
+                "capped": meta["capped"],
+                "fields": result["fields"],
+                "since": args.since,
+                "until": args.until,
+            })
+        if args.json:
+            payload = items[0] if len(items) == 1 else {"queries": items}
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            for n, item in enumerate(items, 1):
+                if len(items) > 1:
+                    print(f"query {n}/{len(items)}: {item['query']!r} — "
+                          f"{item['total']} hits")
+                else:
+                    print(f"{item['query']!r} — {item['total']} hits")
+                if item["capped"]:
+                    print(f"  stored: first {item['stored']}")
+                if item["fields"]:
+                    print("  fields: " + ", ".join(
+                        f"{name}={count}" for name, count in item["fields"].items()))
+            if len(items) > 1:
+                print("note: rerun one term without --counts for snippets")
+        return 0, {
+            "hits": sum(item["total"] for item in items),
+            "queries": len(items),
+            "zero_hits": sum(1 for item in items if item["total"] == 0),
+            "capped": any(item["capped"] for item in items),
+        }
     pages = []
     for result in results:
         hits = result["hits"]
@@ -1985,6 +2191,8 @@ def cmd_search(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
                 "complete": not meta["capped"],
                 "boundary": meta["boundary"],
                 "boundary_kind": meta["boundary_kind"],
+                "since": args.since,
+                "until": args.until,
                 "hits": page,
             })
         payload = items[0] if len(items) == 1 else {"queries": items}
@@ -2028,11 +2236,12 @@ def cmd_search(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
                                                    only=only)
                             for line in block.splitlines():
                                 print(f"      {line}")
+                    print(f"  dump: --dump --from-index {h['idx']} --count 3")
             if page and not fields and not shown_reasoning_advice and any(
                     h["field"] == "reasoning" for h in page):
                 print("  note: some hits are in reasoning — add --fields text for the answer")
                 shown_reasoning_advice = True
-            if page:
+            if page and not args.with_context:
                 print(f"  dump: --dump --from-index {page[0]['idx']} --count 3")
             if not page and display_total > 0 and args.offset >= stored:
                 print(f"  note: --offset {args.offset} is beyond the {stored} "

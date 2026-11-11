@@ -78,8 +78,8 @@ python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --summary-grep 2 "реш
 
 Если `--compactions` ничего не выводит, компакций в сессии не было. `--brief`
 оставляет метаданные, счётчики сообщений, карту компакций и предупреждения;
-таблицы cost/model/tool опускаются. `--exclude-paths` пропускает строки сводки,
-где все совпадения находятся внутри path-подобного токена.
+таблицы cost/model/tool опускаются. `--exclude-paths` пропускает совпадения
+внутри файловых путей в сводках и поиске; URL сохраняются.
 
 Поиск по истории:
 
@@ -88,14 +88,20 @@ python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "решение
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "решение" --from-index 100 --to-index 300
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "решение" --with-context 2
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "0\.2\.1-rc" --regex --before-tail
-python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "правило,решение,отклонённый вариант" --before-tail
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "решение" --since 2026-11-11 --until 2026-11-12
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "правило,решение,отклонённый вариант" --counts
 ```
 
 `--before-tail` оставляет только сообщения, выпавшие после последней
 компакции; `--from-index`/`--to-index` ограничивают поиск включительным
-диапазоном индексов сообщений. `--with-context N` печатает N сообщений вокруг
-каждого хита; с `--json` не сочетается. `--queries` ищет точные строки;
-несколько regex-шаблонов задаются через `--queries-file`.
+диапазоном индексов сообщений. `--since` включается в диапазон, `--until` —
+нет; голая дата означает локальные 00:00, поэтому
+`--since 2026-11-11 --until 2026-11-12` покрывает ровно 2026-11-11.
+`--with-context N` печатает N сообщений вокруг каждого хита; с `--json` не
+сочетается. `--queries` ищет точные строки; несколько regex-шаблонов задаются
+через `--queries-file`. Для широкой пачки `--counts` печатает по строке на
+запрос с распределением по полям; затем выбери термин и запусти без `--counts`.
+`--json` — для машин, а не для умещения пачки в терминал.
 
 Если одного попадания недостаточно, посмотри соседние сообщения:
 

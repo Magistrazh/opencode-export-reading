@@ -77,8 +77,8 @@ python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --summary-grep 2 "decisi
 
 An empty `--compactions` output means the session was never compacted. `--brief`
 keeps metadata, message counts, the compaction map and warnings; cost, model and
-tool tables are omitted. `--exclude-paths` skips summary lines where every match
-sits inside a path-like token.
+tool tables are omitted. `--exclude-paths` skips matches inside filesystem paths
+in summaries and search; URLs are kept.
 
 Search the history:
 
@@ -87,14 +87,19 @@ python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "decision" --be
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "decision" --from-index 100 --to-index 300
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "decision" --with-context 2
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "0\.2\.1-rc" --regex --before-tail
-python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "rule,decision,rejected option" --before-tail
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "decision" --since 2026-11-11 --until 2026-11-12
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "rule,decision,rejected option" --counts
 ```
 
 `--before-tail` limits results to the part removed by the last compaction;
 `--from-index`/`--to-index` limit them to an inclusive message-index range.
+`--since` is inclusive and `--until` is exclusive; a bare date means local
+00:00, so `--since 2026-11-11 --until 2026-11-12` covers exactly 2026-11-11.
 `--with-context N` prints N messages around each hit; it is not available with
 `--json`. `--queries` matches literal strings; use `--queries-file` for a batch
-of regexes.
+of regexes. For a wide batch, `--counts` prints one line per query with field
+distribution; rerun the selected term for snippets. `--json` is for machines,
+not for fitting large batches into the terminal.
 
 Read the surrounding messages when a hit needs more context:
 

@@ -1,6 +1,6 @@
 ---
 name: opencode-export-reading
-version: 0.14.0
+version: 0.15.0
 license: MIT
 description: Recover knowledge that compaction dropped from an OpenCode session by searching the full `opencode export` history instead of trusting the summary. Use whenever the user asks what we decided earlier, что было до компакта, что потерялось при сжатии, восстанови контекст, найди в старой истории, подтяни знания из экспорта; needs an old decision, command, version or caveat that is no longer in context; or opens any file produced by `opencode export`. Also use before quoting anything from an export. Never grep or read an export directly — the bundled script streams it.
 ---
@@ -94,8 +94,9 @@ python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "<term>" --befo
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "<term>" --fields text --limit 5
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "<term>" --with-context 2
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "0\.2\.1-rc" --regex
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --search "<term>" --since 2026-11-11 --until 2026-11-12
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "term one,term two,term three"
-python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "term one,term two"
+python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries "term one,term two" --counts
 python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries-file queries.txt
 ```
 
@@ -104,7 +105,10 @@ python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries-file queries.t
 | `--before-tail` | only hits before the last resolved `tail_start_id` |
 | `--before-compaction N` | only hits before the Nth compaction boundary |
 | `--from-index`, `--to-index` | search: inclusive message-index range |
+| `--since`, `--until` | search: exact time bounds; `--since` inclusive, `--until` exclusive; bare date = local 00:00 |
 | `--with-context N` | search: N messages before/after each hit; no `--json` |
+| `--counts` | search: per-query totals and field distribution; no snippets |
+| `--exclude-paths` | search/summary-grep: skip matches inside filesystem paths; URLs stay |
 | `--fields` | search only: `text,reasoning,tool-input,tool-output,tool-title,tool-error,file` |
 | `--roles` | `user,assistant` |
 | `--regex`, `--case` | pattern instead of literal, case-sensitive |
@@ -117,6 +121,11 @@ python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries-file queries.t
 returns `{queries: [...]}` for a batch and the flat object for one search.
 Regex batches go through `--queries-file`; `--queries` with `--regex` is rejected.
 
+`--until` is exclusive: `--since 2026-11-11 --until 2026-11-12` covers exactly
+2026-11-11. A bare date is local 00:00, not the end of the day. For a large
+batch run `--counts` first; it prints one line per query, then rerun the
+selected term with `--limit`. `--json` is for machines and is larger than text.
+
 Each hit is `#idx message-id time role [field]`, marked `BEFORE-COMPACTION` when
 it is outside the live context. One hit is reported per message: it tells you the
 message matters, not everything it contains.
@@ -128,7 +137,11 @@ multi-line phrase (`"mcp":` or text with `\n`); edits and file contents inside
 tool calls follow the same rule.
 If 0 hits come with filters, retry without `--roles`/`--fields`; then a shorter
 stem or `--regex`. A hit in `reasoning` is not the answer; add `--fields text`.
-An expected zero needs no note.
+An expected zero needs no note. A broad name hits tool output too: add
+`--fields text`, `--roles user`, `--limit 5`, and `--since/--until`;
+`--exclude-paths` removes filesystem paths only, not tool-output noise.
+A `tool-вызовов в работе` warning means the export was taken mid-call; the last
+output is incomplete, not corrupt. Keep the warning visible.
 
 `hits N` is exact; `shown` is the page. If capped, only the first N are stored;
 narrow the query. A missing or unresolved `tail_start_id` is an error, not a
@@ -219,8 +232,8 @@ are omitted.
 
 | Need | Read |
 |---|---|
-| Human overview, install, architecture, limits | `README.md` / `README.ru.md` |
+| Human overview, install, architecture, limits | [README](https://github.com/Magistrazh/opencode-export-reading/blob/main/README.md) / [README.ru](https://github.com/Magistrazh/opencode-export-reading/blob/main/README.ru.md) |
 | Exact export fields and optional values | `references/schema.md` |
-| Eval corpus, fixtures, benchmark format | `evals/opencode-export-reading/README.md` |
-| Release history | `CHANGES.md` |
-| Security and privacy | `SECURITY.md` |
+| Eval corpus, fixtures, benchmark format | [evals README](https://github.com/Magistrazh/opencode-export-reading/blob/main/evals/opencode-export-reading/README.md) |
+| Release history | [CHANGES](https://github.com/Magistrazh/opencode-export-reading/blob/main/CHANGES.md) |
+| Security and privacy | [SECURITY](https://github.com/Magistrazh/opencode-export-reading/blob/main/SECURITY.md) |
