@@ -111,6 +111,21 @@ def check_fixture(name: str, expected: dict, failures: list[str]) -> None:
         check(proc.returncode == 0 and match and int(match.group(1)) == search["before_tail_hits"],
               f"before-tail search hits {search['before_tail_hits']}", failures)
 
+    digest = expected.get("digest")
+    if digest is not None:
+        proc = run([str(path), "--digest", "--json"])
+        check(proc.returncode == 0, "digest --json exit 0", failures)
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        check(data.get("requests_total") == digest["requests"],
+              f"digest requests {digest['requests']}", failures)
+        check(data.get("turn_end_total") == digest["turn_end"],
+              f"digest turn ends {digest['turn_end']}", failures)
+        check(data.get("boundary_index") == digest["boundary_index"],
+              f"digest boundary index {digest['boundary_index']}", failures)
+
     if name == "missing-tail-start-id":
         proc = run([str(path), "--search", "SQLite"])
         check("BEFORE-COMPACTION" not in proc.stdout,

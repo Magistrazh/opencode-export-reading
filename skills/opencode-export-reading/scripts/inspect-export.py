@@ -902,6 +902,71 @@ def build_timeline(path: Path) -> list[dict]:
     return windows
 
 
+DIGEST_LINE = 120
+
+
+def digest_line(msg: dict) -> str:
+    """One line: message text collapsed and cut to a fixed width."""
+    pieces = []
+    for part in msg.get("parts") or []:
+        if part.get("type") != "text":
+            continue
+        text = " ".join(str(part.get("text") or "").split())
+        if text:
+            pieces.append(text)
+    line = " ".join(pieces)
+    if len(line) <= DIGEST_LINE:
+        return line
+    return line[: DIGEST_LINE - 1] + "…"
+
+
+def build_digest(path: Path) -> dict:
+    """Requests and completed turn ends before the last compaction tail.
+
+    Structural only: a turn end is the last assistant message of a turn whose
+    finish is "stop". No wording is interpreted, so no decisions are guessed.
+    """
+    events = compaction_boundaries(path)
+    boundary = number = None
+    for event in events:
+        if event.get("tail_idx") is not None:
+            boundary = event["tail_idx"]
+            number = event["n"]
+    requests: list[dict] = []
+    turn_end: list[dict] = []
+    pending: tuple[int, dict] | None = None
+
+    def entry(idx: int, msg: dict) -> dict:
+        mi = msg.get("info") or {}
+        return {"index": idx, "id": mi.get("id"),
+                "time": (mi.get("time") or {}).get("created"),
+                "text": digest_line(msg)}
+
+    def on_message(idx: int, msg: dict) -> None:
+        nonlocal pending
+        if boundary is not None and idx >= boundary:
+            return
+        parts = msg.get("parts") or []
+        if any(part.get("type") == "compaction" for part in parts):
+            return
+        mi = msg.get("info") or {}
+        role = mi.get("role")
+        if role == "user":
+            if pending is not None:
+                if (pending[1].get("info") or {}).get("finish") == "stop":
+                    turn_end.append(entry(*pending))
+                pending = None
+            requests.append(entry(idx, msg))
+        elif role == "assistant" and mi.get("mode") != "compaction":
+            pending = (idx, msg)
+
+    stream_export(path, on_message)
+    if pending is not None and (pending[1].get("info") or {}).get("finish") == "stop":
+        turn_end.append(entry(*pending))
+    return {"compaction": number, "boundary": boundary,
+            "requests": requests, "turn_end": turn_end}
+
+
 def show_summary(path: Path, number: int) -> str:
     seen = 0
     text = ""
@@ -1092,6 +1157,8 @@ def mode_name(args: argparse.Namespace) -> str:
         return "dump"
     if args.timeline:
         return "timeline"
+    if args.digest:
+        return "digest"
     if args.compactions:
         return "compactions"
     if args.show_summary is not None:
@@ -1537,6 +1604,88 @@ def selftest() -> int:
         ok("SQLite" in dumped and "принято" in dumped and "Postgres" not in dumped,
            "дамп диапазона берёт ровно нужные сообщения")
         ok(show_summary(comp, 1).startswith("сводка"), "сводка компакции читается")
+
+        # --- digest: запросы и завершённые ходы до хвоста ---
+        comp_digest = build_digest(comp)
+        ok(comp_digest["boundary"] == 3 and len(comp_digest["requests"]) == 1
+           and comp_digest["turn_end"] == [],
+           "digest: граница берётся из tail_start_id, незавершённый ход не считается")
+        ok(len(digest_line({"parts": [{"type": "text", "text": "x" * 500}]})) == DIGEST_LINE,
+           "digest: строка режется до фиксированной ширины")
+        ok(digest_line({"parts": [{"type": "text", "text": "x" * 500}]}).endswith("…"),
+           "digest: обрезка помечена, а не молчаливая")
+
+        dig = Path(td) / "digest.json"
+        dig.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
+            {"info": {"id": "d0", "role": "user", "time": {"created": 1}},
+             "parts": [{"type": "text", "text": "первый запрос"}]},
+            {"info": {"id": "d1", "role": "assistant", "time": {"created": 2},
+                      "finish": "tool-calls", "cost": 0, "tokens": {},
+                      "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": "промежуточный"}]},
+            {"info": {"id": "d2", "role": "assistant", "time": {"created": 3},
+                      "finish": "stop", "cost": 0, "tokens": {},
+                      "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": "итог первого хода"}]},
+            {"info": {"id": "d3", "role": "user", "time": {"created": 4}},
+             "parts": [{"type": "text", "text": "второй запрос"}]},
+            {"info": {"id": "d4", "role": "assistant", "time": {"created": 5},
+                      "finish": "tool-calls", "cost": 0, "tokens": {},
+                      "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": "ход оборвался"}]},
+            {"info": {"id": "d5", "role": "user", "time": {"created": 6}},
+             "parts": [{"type": "compaction", "auto": True, "tail_start_id": "d6"}]},
+            {"info": {"id": "d6", "role": "assistant", "mode": "compaction",
+                      "time": {"created": 7}, "finish": "stop", "cost": 0,
+                      "tokens": {}, "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": "сводка"}]},
+            {"info": {"id": "d7", "role": "user", "time": {"created": 8}},
+             "parts": [{"type": "text", "text": "запрос в хвосте"}]},
+            {"info": {"id": "d8", "role": "assistant", "time": {"created": 9},
+                      "finish": "stop", "cost": 0, "tokens": {},
+                      "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": "ответ в хвосте"}]},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        dig_result = build_digest(dig)
+        ok(dig_result["boundary"] == 6 and dig_result["compaction"] == 1,
+           "digest: граница и номер компакции")
+        ok([r["id"] for r in dig_result["requests"]] == ["d0", "d3"],
+           "digest: только user-сообщения до хвоста, событие компакции пропущено")
+        ok([t["id"] for t in dig_result["turn_end"]] == ["d2"],
+           "digest: оборванный ход не выдаётся за завершённый")
+        ok(dig_result["requests"][0]["text"] == "первый запрос",
+           "digest: текст запроса в одну строку")
+
+        nc = Path(td) / "digest-nocomp.json"
+        nc.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
+            {"info": {"id": "n0", "role": "user", "time": {"created": 1}},
+             "parts": [{"type": "text", "text": "единственный запрос"}]},
+            {"info": {"id": "n1", "role": "assistant", "time": {"created": 2},
+                      "finish": "stop", "cost": 0, "tokens": {},
+                      "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": "ответ"}]},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        nc_result = build_digest(nc)
+        ok(nc_result["boundary"] is None and len(nc_result["requests"]) == 1
+           and [t["id"] for t in nc_result["turn_end"]] == ["n1"],
+           "digest без компакций: вся история, последний ответ хода учтён")
+
+        edge = Path(td) / "digest-boundary.json"
+        edge.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
+            {"info": {"id": "q0", "role": "user", "time": {"created": 1}},
+             "parts": [{"type": "text", "text": "до границы"}]},
+            {"info": {"id": "q1", "role": "assistant", "time": {"created": 2},
+                      "finish": "stop", "cost": 0, "tokens": {},
+                      "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": "ответ до границы"}]},
+            {"info": {"id": "q2", "role": "user", "time": {"created": 3}},
+             "parts": [{"type": "text", "text": "первое сообщение хвоста"}]},
+            {"info": {"id": "q3", "role": "user", "time": {"created": 4}},
+             "parts": [{"type": "compaction", "auto": True, "tail_start_id": "q2"}]},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        edge_result = build_digest(edge)
+        ok([r["id"] for r in edge_result["requests"]] == ["q0"],
+           "digest: сообщение ровно на границе уже хвост, а не история")
         empty_path = Path(td) / "empty-summary.json"
         empty_path.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
             {"info": {"id": "e0", "role": "user", "time": {"created": 1}},
@@ -1904,6 +2053,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--window", type=non_negative, default=2,
                     help="сколько сообщений до/после для --around")
     mode.add_argument("--timeline", action="store_true", help="карта сессии по окнам компакций")
+    mode.add_argument("--digest", action="store_true",
+                      help="запросы и финальные ответы ходов до хвоста, по одной строке")
     ap.add_argument("--offset", type=non_negative, default=0, help="пропустить первые N хитов")
     ap.add_argument("--count", type=positive)
     ap.add_argument("--max-chars", type=positive, default=3000,
@@ -2037,6 +2188,9 @@ def validate_args(ap: argparse.ArgumentParser, args: argparse.Namespace) -> None
     if args.around is not None and (args.from_id or args.to_id or args.from_index is not None
                                     or args.to_index is not None or args.count or args.all):
         ap.error("--around не сочетается с --from-*/--to-*/--count/--all")
+    if args.digest and (args.all or args.offset or args.count):
+        ap.error("--digest всегда берёт историю до хвоста: "
+                 "--all/--offset/--count не нужны")
 
 
 def run_with_telemetry(path: Path, mode: str, started: float, fn) -> int:
@@ -2294,6 +2448,44 @@ def cmd_timeline(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
                 print(f"      {w['first_user']}")
     return 0, extra
 
+
+def cmd_digest(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
+    data = build_digest(path)
+    requests = data["requests"][: args.limit]
+    ends = data["turn_end"][: args.limit]
+    extra = {"requests": len(data["requests"]), "turn_end": len(data["turn_end"])}
+    if args.json:
+        print(json.dumps({
+            "compaction": data["compaction"],
+            "boundary_index": data["boundary"],
+            "scope": "before-tail" if data["boundary"] is not None else "whole-history",
+            "requests_total": len(data["requests"]),
+            "turn_end_total": len(data["turn_end"]),
+            "requests": requests,
+            "turn_end": ends,
+        }, ensure_ascii=False, indent=2))
+        return 0, extra
+    scope = ("before the tail" if data["boundary"] is not None
+             else "whole history — в экспорте нет компакций")
+    print(f"digest: {len(data['requests'])} requests, "
+          f"{len(data['turn_end'])} turn ends — {scope}")
+    print("  structural: truncated heads of messages, not a summary")
+    for title, shown, total in (("REQUESTS", requests, len(data["requests"])),
+                                ("TURN-END", ends, len(data["turn_end"]))):
+        print(f"\n{title} {total}")
+        if not shown:
+            print("  (empty)")
+            continue
+        for item in shown:
+            when = local_dt(item["time"]).strftime("%d.%m %H:%M") if item["time"] else "?"
+            print(f"  #{item['index']} {item['id'] or '?'} {when}  "
+                  f"{item['text'] or '(no text)'}")
+        if total > len(shown):
+            print(f"  ... showing first {len(shown)} of {total}; raise --limit")
+        print(f"  dump: --dump --from-index {shown[0]['index']} --count 3")
+    return 0, extra
+
+
 def cmd_slice(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
     from_id, from_index = split_ref(args.from_id, args.from_index)
     to_id, to_index = split_ref(args.to_id, args.to_index)
@@ -2418,6 +2610,8 @@ def cmd_overview(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
 def dispatch(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
     if args.search is not None or args.queries or args.queries_file:
         return cmd_search(path, args)
+    if args.digest:
+        return cmd_digest(path, args)
     if args.timeline:
         return cmd_timeline(path, args)
     if args.dump or args.around is not None:

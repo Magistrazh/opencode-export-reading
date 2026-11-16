@@ -63,6 +63,27 @@
       "dump": 0
     }
   },
+  "turns-digest": {
+    "purpose": "completed and interrupted turns across a compaction boundary",
+    "messages": 9,
+    "compactions": 1,
+    "summary_state": "present",
+    "search": {
+      "query": "First",
+      "before_tail_hits": 1
+    },
+    "digest": {
+      "requests": 2,
+      "turn_end": 1,
+      "boundary_index": 7
+    },
+    "exit_codes": {
+      "timeline": 0,
+      "before_tail": 0,
+      "show_summary": 0,
+      "dump": 0
+    }
+  },
   "huge-tool-output": {
     "purpose": "one very large tool output for max-chars/truncation",
     "messages": 2,

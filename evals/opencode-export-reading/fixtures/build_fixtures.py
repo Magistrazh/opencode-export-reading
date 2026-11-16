@@ -112,6 +112,22 @@ def main() -> None:
         user("m8", 8, "After the second compaction."),
     ])
 
+    partial = assistant("t1", 1, "Intermediate step.")
+    partial["info"]["finish"] = "tool-calls"
+    cut = assistant("t4", 4, "This turn never finished.")
+    cut["info"]["finish"] = "tool-calls"
+    write("turns-digest", [
+        user("t0", 0, "First request before compaction."),
+        partial,
+        assistant("t2", 2, "Final answer before compaction."),
+        user("t3", 3, "Second request before compaction."),
+        cut,
+        compaction("c1", 5, "tail1"),
+        summary("s1", 6, "## Summary\nBoth requests are covered here."),
+        user("tail1", 7, "Retained tail."),
+        assistant("t8", 8, "Answer in the tail."),
+    ])
+
     huge = assistant("m1", 1)
     huge["parts"].append({
         "type": "tool", "tool": "bash",
@@ -156,6 +172,14 @@ def main() -> None:
             "messages": 9, "compactions": 2,
             "summary_state": "two present",
             "search": {"query": "lost", "before_tail_hits": 2},
+            "exit_codes": {"timeline": 0, "before_tail": 0, "show_summary": 0, "dump": 0},
+        },
+        "turns-digest": {
+            "purpose": "completed and interrupted turns across a compaction boundary",
+            "messages": 9, "compactions": 1,
+            "summary_state": "present",
+            "search": {"query": "First", "before_tail_hits": 1},
+            "digest": {"requests": 2, "turn_end": 1, "boundary_index": 7},
             "exit_codes": {"timeline": 0, "before_tail": 0, "show_summary": 0, "dump": 0},
         },
         "huge-tool-output": {

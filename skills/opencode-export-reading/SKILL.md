@@ -87,6 +87,12 @@ most lines, so it shows structural change, not which facts were dropped; use
 `--summary-grep N TERM --exclude-paths` skips lines where every match sits inside
 a path-like token, so a file path does not look like a dropped fact.
 
+`--digest` shows the shape of the lost work: one truncated line per request and
+per completed turn end before the tail, each with its message index. It is
+structural, not interpretive — a turn end is the last assistant message of a turn
+whose `finish` is `stop`, and an interrupted turn is not one. Open the index it
+gives with `--dump --from-index N --count 3`; `--json` returns the same fields.
+
 ## 3. Search the full history
 
 ```bash
@@ -221,6 +227,7 @@ are omitted.
 | Map compactions | `inspect "$EXPORT" --compactions` |
 | Brief overview | `inspect "$EXPORT" --brief` |
 | See what survived | `inspect "$EXPORT" --show-summary N` |
+| Requests and turn ends before the tail | `inspect "$EXPORT" --digest` |
 | Outline or grep a summary | `inspect "$EXPORT" --summary-outline N`; `--summary-grep N TERM` |
 | Grep summary without path hits | `inspect "$EXPORT" --summary-grep N TERM --exclude-paths` |
 | Search only pre-compaction history | `inspect "$EXPORT" --search TERM --before-tail` |
