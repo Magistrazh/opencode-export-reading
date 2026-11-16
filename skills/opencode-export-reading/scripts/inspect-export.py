@@ -967,6 +967,169 @@ def build_digest(path: Path) -> dict:
             "requests": requests, "turn_end": turn_end}
 
 
+CODE_TOKEN = r"[A-Za-z_][A-Za-z0-9_.-]*"
+ORDER_RUN_RE = re.compile(rf"{CODE_TOKEN}(?:\s*(?:,|\||→|->|/)\s*{CODE_TOKEN}){{2,}}")
+ORDER_SEP_RE = re.compile(r"\s*(?:,|\||→|->|/)\s*")
+FLAG_PAIR_RE = re.compile(r"(--[a-z0-9][a-z0-9-]*)\s+([^\s,;`'\")]+)")
+CHECK_WARN_CAP = 20
+CHECK_ABSENT_CAP = 30
+
+
+def message_text(msg: dict) -> str:
+    """Text parts of a message, whitespace collapsed."""
+    return " ".join(
+        " ".join(str(part.get("text") or "").split())
+        for part in msg.get("parts") or []
+        if part.get("type") == "text"
+    ).strip()
+
+
+def order_sequences(text: str) -> list[list[str]]:
+    """Ordered runs of 3+ code-like tokens.
+
+    Deliberately narrow: ASCII identifiers only, joined by a comma, a pipe, an
+    arrow or a slash, and at least one such separator must be a comma or an
+    arrow. Prose enumerations never produce a sequence, so Russian text cannot
+    trigger a false warning.
+    """
+    found: list[list[str]] = []
+    for match in ORDER_RUN_RE.finditer(text):
+        run = match.group(0)
+        if "," not in run and "->" not in run and "→" not in run:
+            continue
+        tokens = [t.strip("`'\"").rstrip(".,;:") for t in ORDER_SEP_RE.split(run)]
+        tokens = [t for t in tokens if t]
+        if len(tokens) < 3:
+            continue
+        if tokens not in found:
+            found.append(tokens)
+    return found
+
+
+def flag_pairs(text: str) -> list[tuple[str, str]]:
+    """`--flag value` pairs; a following flag is not a value."""
+    pairs: list[tuple[str, str]] = []
+    for match in FLAG_PAIR_RE.finditer(text):
+        flag = match.group(1)
+        value = match.group(2).strip("`'\"").rstrip(".,;:")
+        if not value or value.startswith("-"):
+            continue
+        if (flag, value) not in pairs:
+            pairs.append((flag, value))
+    return pairs
+
+
+def find_token(text: str, token: str) -> int:
+    """Index of a standalone token, or -1.
+
+    A dot is part of an identifier only when a name follows it, so `status` in
+    `status.` matches while `status` inside `name.status` or `status_code` does not.
+    """
+    at = text.find(token)
+    while at != -1:
+        before = text[at - 1] if at > 0 else ""
+        end = at + len(token)
+        after = text[end] if end < len(text) else ""
+        glued_before = bool(before) and (before.isalnum() or before in "_-.")
+        glued_after = (bool(after) and (after.isalnum() or after in "_-")
+                       or (after == "." and text[end + 1:end + 2].isalnum()))
+        if not glued_before and not glued_after:
+            return at
+        at = text.find(token, at + 1)
+    return -1
+
+
+def summary_numbers(path: Path) -> int:
+    """How many compaction summaries the export carries."""
+    total = 0
+
+    def on_message(idx: int, msg: dict) -> None:
+        nonlocal total
+        if (msg.get("info") or {}).get("mode") == "compaction":
+            total += 1
+
+    stream_export(path, on_message)
+    return total
+
+
+def check_summary(path: Path, number: int) -> dict:
+    """Compare summary N with the messages that follow its own boundary.
+
+    A warning is a candidate for review, not a proven contradiction: the
+    patterns are ASCII-only and literal, so most prose simply is not checked.
+    """
+    events = compaction_boundaries(path)
+    event = next((item for item in events if item["n"] == number), None)
+    if event is None:
+        raise ExportError(f"компакция {number} не найдена: в экспорте {len(events)}")
+    tail_idx = event.get("tail_idx")
+    if tail_idx is None:
+        raise ExportError(
+            f"граница компакции {number} не разрешена: tail_start_id "
+            f"{event.get('tail_id')!r} отсутствует в экспорте"
+        )
+    text = show_summary(path, number)
+    if not text.strip():
+        raise ExportError(f"сводка {number} пуста — сравнивать не с чем")
+    sequences = order_sequences(text)
+    pairs = flag_pairs(text)
+    warnings: list[dict] = []
+    seen: set[tuple] = set()
+    corpus: list[str] = []
+
+    def add(warning: dict) -> None:
+        key = (warning["kind"], warning["index"], str(warning["summary"]),
+               str(warning["tail"]))
+        if key in seen or len(warnings) >= CHECK_WARN_CAP:
+            return
+        seen.add(key)
+        warnings.append(warning)
+
+    def on_message(idx: int, msg: dict) -> None:
+        if idx < tail_idx:
+            return
+        info = msg.get("info") or {}
+        if info.get("mode") == "compaction":
+            return
+        body = message_text(msg)
+        if not body:
+            return
+        corpus.append(body)
+        for tokens in sequences:
+            hits: list[tuple[int, str]] = []
+            for token in tokens:
+                at = find_token(body, token)
+                if at < 0:
+                    hits = []
+                    break
+                hits.append((at, token))
+            if not hits:
+                continue
+            order = [token for _pos, token in sorted(hits)]
+            if order != tokens:
+                add({"kind": "order", "summary": ", ".join(tokens),
+                     "tail": ", ".join(order), "index": idx, "id": info.get("id")})
+        for flag, value in pairs:
+            pattern = rf"{re.escape(flag)}(?![\w-])\s+([^\s,;`'\")]+)"
+            for found in re.finditer(pattern, body):
+                other = found.group(1).strip("`'\"")
+                if not other or other.startswith("-") or other == value:
+                    continue
+                add({"kind": "value", "flag": flag, "summary": value,
+                     "tail": other, "index": idx, "id": info.get("id")})
+                break
+
+    stream_export(path, on_message)
+    joined = "\n".join(corpus)
+    absent = [
+        token for token in sorted(set(re.findall(CODE_TOKEN, text)))
+        if len(token) >= 3 and find_token(joined, token) < 0
+    ][:CHECK_ABSENT_CAP]
+    return {"compaction": number, "tail_index": tail_idx, "warnings": warnings,
+            "checked": {"sequences": len(sequences), "pairs": len(pairs)},
+            "absent": absent}
+
+
 def show_summary(path: Path, number: int) -> str:
     seen = 0
     text = ""
@@ -1169,6 +1332,8 @@ def mode_name(args: argparse.Namespace) -> str:
         return "summary-grep"
     if args.summary_diff:
         return "summary-diff"
+    if args.check_summary is not None:
+        return "summary-check"
     return "overview"
 
 
@@ -1686,6 +1851,75 @@ def selftest() -> int:
         edge_result = build_digest(edge)
         ok([r["id"] for r in edge_result["requests"]] == ["q0"],
            "digest: сообщение ровно на границе уже хвост, а не история")
+
+        # --- check-summary: сводка против истории после её границы ---
+        chk = Path(td) / "check.json"
+        chk.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
+            {"info": {"id": "u0", "role": "user", "time": {"created": 1}},
+             "parts": [{"type": "text", "text": "before the boundary"}]},
+            {"info": {"id": "c1", "role": "user", "time": {"created": 2}},
+             "parts": [{"type": "compaction", "auto": True, "tail_start_id": "a0"}]},
+            {"info": {"id": "s1", "role": "assistant", "mode": "compaction",
+                      "time": {"created": 3}, "finish": "stop", "cost": 0,
+                      "tokens": {}, "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": (
+                 "Columns: name,status,created. Ran with --count 20. "
+                 "only_in_summary_token is mentioned here.")}]},
+            {"info": {"id": "a0", "role": "assistant", "time": {"created": 4},
+                      "finish": "stop", "cost": 0, "tokens": {},
+                      "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": "Real order: name,created,status."}]},
+            {"info": {"id": "a1", "role": "user", "time": {"created": 5}},
+             "parts": [{"type": "text", "text": "rerun with --count 50"}]},
+            {"info": {"id": "a2", "role": "assistant", "time": {"created": 6},
+                      "finish": "stop", "cost": 0, "tokens": {},
+                      "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": "same order: name,status,created"}]},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        checked = check_summary(chk, 1)
+        kinds = [(w["kind"], w["index"]) for w in checked["warnings"]]
+        ok(("order", 3) in kinds, "check-summary: другой порядок найден")
+        ok(("value", 4) in kinds, "check-summary: другое значение флага найдено")
+        ok(("order", 5) not in kinds, "check-summary: тот же порядок не помечается")
+        ok(checked["checked"]["sequences"] >= 1 and checked["checked"]["pairs"] >= 1,
+           "check-summary: счётчики проверенных шаблонов")
+        ok("only_in_summary_token" in checked["absent"],
+           "check-summary: отсутствующий токен уходит в absent, без warning")
+        ok(order_sequences("файл, папка, дата") == [],
+           "check-summary: проза без ASCII-идентификаторов не даёт списка")
+        ok(order_sequences("and/or/but") == [],
+           "check-summary: слэш без запятой и стрелки не считается списком")
+        ok(find_token("status_code and status.", "status") == 16,
+           "check-summary: токен внутри identifier не считается совпадением")
+        ok(find_token("name.status", "status") == -1,
+           "check-summary: составной identifier не даёт ложного совпадения")
+
+        raises(lambda: check_summary(chk, 2), "check-summary: нет такой сводки — отказ")
+        broken = Path(td) / "check-broken.json"
+        broken.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
+            {"info": {"id": "b0", "role": "user", "time": {"created": 1}},
+             "parts": [{"type": "text", "text": "x"}]},
+            {"info": {"id": "bc", "role": "user", "time": {"created": 2}},
+             "parts": [{"type": "compaction", "auto": True, "tail_start_id": "gone"}]},
+            {"info": {"id": "bs", "role": "assistant", "mode": "compaction",
+                      "time": {"created": 3}, "finish": "stop", "cost": 0,
+                      "tokens": {}, "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": "summary"}]},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        raises(lambda: check_summary(broken, 1),
+               "check-summary: неразрешённая граница — отказ, а не догадка")
+        empty_chk = Path(td) / "check-empty.json"
+        empty_chk.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
+            {"info": {"id": "e0", "role": "user", "time": {"created": 1}},
+             "parts": [{"type": "text", "text": "x"}]},
+            {"info": {"id": "ec", "role": "user", "time": {"created": 2}},
+             "parts": [{"type": "compaction", "auto": True, "tail_start_id": "e0"}]},
+            {"info": {"id": "es", "role": "assistant", "mode": "compaction",
+                      "time": {"created": 3}, "finish": "stop", "cost": 0,
+                      "tokens": {}, "modelID": "m", "providerID": "p"},
+             "parts": [{"type": "text", "text": ""}]},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        raises(lambda: check_summary(empty_chk, 1), "check-summary: пустая сводка — отказ")
         empty_path = Path(td) / "empty-summary.json"
         empty_path.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
             {"info": {"id": "e0", "role": "user", "time": {"created": 1}},
@@ -2011,6 +2245,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="строки N-й сводки, содержащие TERM")
     mode.add_argument("--summary-diff", nargs=2, type=positive, metavar=("A", "B"),
                       help="diff двух сводок компакции")
+    mode.add_argument("--check-summary", nargs="?", const=0, type=positive, metavar="N",
+                      help="где N-я сводка расходится с историей после её границы")
     mode.add_argument("--search", metavar="QUERY", help="поиск по полной истории")
     ap.add_argument("--queries", nargs="+", default=[],
                     help="несколько запросов (через запятую или пробелами), один проход; "
@@ -2578,6 +2814,36 @@ def cmd_summary_diff(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
         print("\n".join(diff) if diff else "  (нет различий)")
     return 0, extra
 
+
+def cmd_summary_check(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
+    number = args.check_summary or summary_numbers(path)
+    if not number:
+        raise ExportError("в экспорте нет компакций — проверять нечего")
+    data = check_summary(path, number)
+    checked = data["checked"]
+    extra = {"candidates": len(data["warnings"]),
+             "sequences": checked["sequences"], "pairs": checked["pairs"]}
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+        return 0, extra
+    print(f"summary check: compaction {data['compaction']}, "
+          f"tail from index {data['tail_index']}")
+    print("  candidates, not verdicts: the history wins, confirm with --dump")
+    if not data["warnings"]:
+        print("  no contradictions in the checked patterns")
+    for warning in data["warnings"]:
+        where = f"#{warning['index']} {warning.get('id') or '?'}"
+        if warning["kind"] == "order":
+            print(f"  ORDER  summary: {warning['summary']}")
+            print(f"         tail {where}: {warning['tail']}")
+        else:
+            print(f"  VALUE  {warning['flag']} {warning['summary']} in summary, "
+                  f"{warning['tail']} at {where}")
+    print(f"  checked: {checked['sequences']} sequences, "
+          f"{checked['pairs']} flag/value pairs")
+    return 0, extra
+
+
 def cmd_compactions(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
     summary = analyse_file(path)
     events = summary["compaction_events"]
@@ -2624,6 +2890,8 @@ def dispatch(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
         return cmd_summary_grep(path, args)
     if args.summary_diff:
         return cmd_summary_diff(path, args)
+    if args.check_summary is not None:
+        return cmd_summary_check(path, args)
     if args.compactions:
         return cmd_compactions(path, args)
     return cmd_overview(path, args)

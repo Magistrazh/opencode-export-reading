@@ -103,6 +103,9 @@ def check_fixture(name: str, expected: dict, failures: list[str]) -> None:
           "summary exit code", failures)
     check(run([str(path), "--dump", "--from-index", "0", "--count", "1"]).returncode == codes["dump"],
           "dump exit code", failures)
+    if "check_summary" in codes:
+        check(run([str(path), "--check-summary"]).returncode == codes["check_summary"],
+              "check-summary exit code", failures)
 
     search = expected.get("search", {})
     if search.get("before_tail_hits") is not None:
@@ -125,6 +128,19 @@ def check_fixture(name: str, expected: dict, failures: list[str]) -> None:
               f"digest turn ends {digest['turn_end']}", failures)
         check(data.get("boundary_index") == digest["boundary_index"],
               f"digest boundary index {digest['boundary_index']}", failures)
+
+    summary_check = expected.get("check_summary")
+    if summary_check is not None:
+        proc = run([str(path), "--check-summary", "--json"])
+        check(proc.returncode == 0, "check-summary --json exit 0", failures)
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        check(len(data.get("warnings", [])) == summary_check["warnings"],
+              f"check-summary warnings {summary_check['warnings']}", failures)
+        check(data.get("checked", {}).get("sequences") == summary_check["sequences"],
+              f"check-summary sequences {summary_check['sequences']}", failures)
 
     if name == "missing-tail-start-id":
         proc = run([str(path), "--search", "SQLite"])

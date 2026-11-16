@@ -28,7 +28,8 @@
       "timeline": 0,
       "before_tail": 1,
       "show_summary": 0,
-      "dump": 0
+      "dump": 0,
+      "check_summary": 1
     }
   },
   "empty-summary": {
@@ -44,7 +45,8 @@
       "timeline": 0,
       "before_tail": 0,
       "show_summary": 0,
-      "dump": 0
+      "dump": 0,
+      "check_summary": 1
     }
   },
   "multiple-compactions": {
@@ -82,6 +84,27 @@
       "before_tail": 0,
       "show_summary": 0,
       "dump": 0
+    }
+  },
+  "contradictory-summary": {
+    "purpose": "summary disagrees with the retained tail on order and a flag value",
+    "messages": 5,
+    "compactions": 1,
+    "summary_state": "present",
+    "search": {
+      "query": "order",
+      "before_tail_hits": 0
+    },
+    "check_summary": {
+      "warnings": 2,
+      "sequences": 1
+    },
+    "exit_codes": {
+      "timeline": 0,
+      "before_tail": 0,
+      "show_summary": 0,
+      "dump": 0,
+      "check_summary": 0
     }
   },
   "huge-tool-output": {

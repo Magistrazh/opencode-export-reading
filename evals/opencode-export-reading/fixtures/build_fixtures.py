@@ -128,6 +128,14 @@ def main() -> None:
         assistant("t8", 8, "Answer in the tail."),
     ])
 
+    write("contradictory-summary", [
+        user("m0", 0, "Work before compaction."),
+        compaction("c1", 1, "tail1"),
+        summary("s1", 2, "## Summary\nColumns were name,status,created; ran with --count 20."),
+        assistant("tail1", 3, "The real order is name,created,status."),
+        user("tail2", 4, "Rerun with --count 50."),
+    ])
+
     huge = assistant("m1", 1)
     huge["parts"].append({
         "type": "tool", "tool": "bash",
@@ -158,14 +166,16 @@ def main() -> None:
             "messages": 4, "compactions": 1,
             "summary_state": "present",
             "search": {"query": "SQLite", "before_tail_hits": None},
-            "exit_codes": {"timeline": 0, "before_tail": 1, "show_summary": 0, "dump": 0},
+            "exit_codes": {"timeline": 0, "before_tail": 1, "show_summary": 0,
+                           "dump": 0, "check_summary": 1},
         },
         "empty-summary": {
             "purpose": "compaction event with an empty summary",
             "messages": 4, "compactions": 1,
             "summary_state": "empty",
             "search": {"query": "SQLite", "before_tail_hits": 1},
-            "exit_codes": {"timeline": 0, "before_tail": 0, "show_summary": 0, "dump": 0},
+            "exit_codes": {"timeline": 0, "before_tail": 0, "show_summary": 0,
+                           "dump": 0, "check_summary": 1},
         },
         "multiple-compactions": {
             "purpose": "two compactions; the last boundary is authoritative",
@@ -181,6 +191,15 @@ def main() -> None:
             "search": {"query": "First", "before_tail_hits": 1},
             "digest": {"requests": 2, "turn_end": 1, "boundary_index": 7},
             "exit_codes": {"timeline": 0, "before_tail": 0, "show_summary": 0, "dump": 0},
+        },
+        "contradictory-summary": {
+            "purpose": "summary disagrees with the retained tail on order and a flag value",
+            "messages": 5, "compactions": 1,
+            "summary_state": "present",
+            "search": {"query": "order", "before_tail_hits": 0},
+            "check_summary": {"warnings": 2, "sequences": 1},
+            "exit_codes": {"timeline": 0, "before_tail": 0, "show_summary": 0,
+                           "dump": 0, "check_summary": 0},
         },
         "huge-tool-output": {
             "purpose": "one very large tool output for max-chars/truncation",

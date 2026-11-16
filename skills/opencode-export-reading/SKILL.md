@@ -93,6 +93,12 @@ structural, not interpretive — a turn end is the last assistant message of a t
 whose `finish` is `stop`, and an interrupted turn is not one. Open the index it
 gives with `--dump --from-index N --count 3`; `--json` returns the same fields.
 
+`--check-summary [N]` compares summary N with the messages after its boundary:
+`ORDER` (same ASCII identifiers, other order) and `VALUE` (a `--flag value`
+differs). ASCII and literal only — prose is not checked, so silence is no proof;
+`--dump` the index before believing a warning. A missing summary or an unresolved
+boundary is an error, not a guess. `--json` also lists tokens the tail lacks.
+
 ## 3. Search the full history
 
 ```bash
@@ -228,6 +234,7 @@ are omitted.
 | Brief overview | `inspect "$EXPORT" --brief` |
 | See what survived | `inspect "$EXPORT" --show-summary N` |
 | Requests and turn ends before the tail | `inspect "$EXPORT" --digest` |
+| Check a summary against the tail | `inspect "$EXPORT" --check-summary N` |
 | Outline or grep a summary | `inspect "$EXPORT" --summary-outline N`; `--summary-grep N TERM` |
 | Grep summary without path hits | `inspect "$EXPORT" --summary-grep N TERM --exclude-paths` |
 | Search only pre-compaction history | `inspect "$EXPORT" --search TERM --before-tail` |

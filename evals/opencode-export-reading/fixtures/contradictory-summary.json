@@ -1,0 +1,117 @@
+{
+  "info": {
+    "id": "ses_fixture",
+    "title": "fixture contradictory-summary",
+    "directory": "fixture/project",
+    "agent": "build",
+    "version": "1.19.5",
+    "time": {
+      "created": 1700000000000,
+      "updated": 1700000009000
+    },
+    "cost": 0
+  },
+  "messages": [
+    {
+      "info": {
+        "id": "m0",
+        "role": "user",
+        "time": {
+          "created": 1700000000000
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Work before compaction."
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "c1",
+        "role": "user",
+        "time": {
+          "created": 1700000000100
+        }
+      },
+      "parts": [
+        {
+          "type": "compaction",
+          "auto": true,
+          "tail_start_id": "tail1"
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "s1",
+        "role": "assistant",
+        "time": {
+          "created": 1700000000200
+        },
+        "cost": 0,
+        "tokens": {},
+        "modelID": "fixture-model",
+        "providerID": "fixture-provider",
+        "finish": "stop",
+        "mode": "compaction"
+      },
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "text",
+          "text": "## Summary\nColumns were name,status,created; ran with --count 20."
+        },
+        {
+          "type": "step-finish",
+          "cost": 0
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "tail1",
+        "role": "assistant",
+        "time": {
+          "created": 1700000000300
+        },
+        "cost": 0,
+        "tokens": {},
+        "modelID": "fixture-model",
+        "providerID": "fixture-provider",
+        "finish": "stop"
+      },
+      "parts": [
+        {
+          "type": "step-start"
+        },
+        {
+          "type": "text",
+          "text": "The real order is name,created,status."
+        },
+        {
+          "type": "step-finish",
+          "cost": 0
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "tail2",
+        "role": "user",
+        "time": {
+          "created": 1700000000400
+        }
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Rerun with --count 50."
+        }
+      ]
+    }
+  ]
+}
