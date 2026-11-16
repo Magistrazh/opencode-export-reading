@@ -1,5 +1,24 @@
 # Changes
 
+## 0.16.0
+
+- `--digest` lists the requests and the completed turn ends before the tail, one
+  truncated line each with a message index for `--dump --from-index`. A turn end
+  is structural: the last assistant message of a turn whose `finish` is `stop`,
+  while an interrupted turn is never reported as one. `--json` returns
+  `requests`, `turn_end`, the boundary index and totals. `--digest` always reads
+  history up to the tail, so `--all`, `--offset` and `--count` are rejected
+  instead of being silently ignored.
+- `--check-summary [N]` compares compaction summary N with the messages after its
+  own boundary and reports candidates: `ORDER` (the same ASCII identifiers in
+  another order) and `VALUE` (a `--flag value` pair whose value differs). `--json`
+  additionally lists tokens the tail never mentions. The patterns are ASCII and
+  literal only, so prose is not checked and silence is not proof; the history
+  wins, and a warning is meant to be confirmed with `--dump`. A missing summary,
+  an empty summary and an unresolved `tail_start_id` are errors, not guesses.
+- Both modes are registered, so usage records carry `digest` and `summary-check`
+  instead of falling back to `overview`.
+
 ## 0.15.2
 
 - Feedback and friction hints use the script path as invoked, without resolving
