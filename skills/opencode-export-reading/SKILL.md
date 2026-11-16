@@ -1,6 +1,6 @@
 ---
 name: opencode-export-reading
-version: 0.15.1
+version: 0.15.2
 license: MIT
 description: Recover knowledge that compaction dropped from an OpenCode session by searching the full `opencode export` history instead of trusting the summary. Use whenever the user asks what we decided earlier, что было до компакта, что потерялось при сжатии, восстанови контекст, найди в старой истории, подтяни знания из экспорта; needs an old decision, command, version or caveat that is no longer in context; or opens any file produced by `opencode export`. Also use before quoting anything from an export. Never grep or read an export directly — the bundled script streams it.
 ---
@@ -120,6 +120,8 @@ python "$SKILL_DIR/scripts/inspect-export.py" "$EXPORT" --queries-file queries.t
 `--fields` filters **search**; for `--dump`/`--around` use `--only`. `--json`
 returns `{queries: [...]}` for a batch and the flat object for one search.
 Regex batches go through `--queries-file`; `--queries` with `--regex` is rejected.
+A line in `--queries-file` is one query: commas inside it are preserved, while
+`--queries` splits on commas.
 
 `--until` is exclusive: `--since 2026-11-11 --until 2026-11-12` covers exactly
 2026-11-11. A bare date is local 00:00, not the end of the day. For a large

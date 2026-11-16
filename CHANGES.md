@@ -1,5 +1,13 @@
 # Changes
 
+## 0.15.2
+
+- Feedback and friction hints use the script path as invoked, without resolving
+  junctions/symlinks. An installed skill now points at its own `feedback.py`,
+  not at the repository target behind the junction.
+- `SKILL.md`: `--queries-file` keeps commas; one line is one query, while
+  `--queries` splits on commas.
+
 ## 0.15.1
 
 - `SKILL.md` no longer links to repository-only docs (README, CHANGES,

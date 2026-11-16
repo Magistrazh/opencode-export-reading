@@ -1144,8 +1144,13 @@ def record_usage(mode: str, path: Path, size: int, started: float,
         return None
 
 
+def executing_script(name: str) -> Path:
+    """Path to a sibling script as invoked, without resolving junctions/symlinks."""
+    return Path(__file__).absolute().with_name(name)
+
+
 def feedback_hint(mode: str, path: Path) -> str:
-    fb = Path(__file__).resolve().with_name("feedback.py")
+    fb = executing_script("feedback.py")
     return (f'feedback: before you answer, run: python "{fb}" '
             f'--skill {skill_name()} --quick --solved yes')
 
@@ -1162,7 +1167,7 @@ def friction_of(extra: dict) -> list[str]:
 
 
 def friction_hint(mode: str, path: Path, friction: list[str]) -> str:
-    fb = Path(__file__).resolve().with_name("feedback.py")
+    fb = executing_script("feedback.py")
     if friction == ["0 hits"]:
         return ("0 hits: if expected (term absent), ignore this line; "
                 "if unexpected, record it now:\n"
