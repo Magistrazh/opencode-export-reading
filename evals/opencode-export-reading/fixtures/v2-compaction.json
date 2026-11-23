@@ -1,0 +1,94 @@
+{
+  "info": {
+    "id": "ses_fixture",
+    "title": "fixture v2-compaction",
+    "directory": "fixture/project",
+    "agent": "build",
+    "version": "1.19.5",
+    "time": {
+      "created": 1700000000000,
+      "updated": 1700000009000
+    },
+    "cost": 0
+  },
+  "messages": [
+    {
+      "id": "u0",
+      "type": "user",
+      "time": {
+        "created": 1700000000000
+      },
+      "text": "Lost v2 fact: SQLite chosen for the queue.",
+      "files": []
+    },
+    {
+      "id": "a1",
+      "type": "assistant",
+      "time": {
+        "created": 1700000000100
+      },
+      "agent": "build",
+      "cost": 0,
+      "tokens": {},
+      "finish": "stop",
+      "model": {
+        "id": "fixture-model",
+        "providerID": "fixture-provider"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Noted."
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "type": "system",
+      "time": {
+        "created": 1700000000200
+      },
+      "text": "The available tools have changed."
+    },
+    {
+      "id": "c3",
+      "type": "compaction",
+      "time": {
+        "created": 1700000000300
+      },
+      "status": "completed",
+      "reason": "manual",
+      "summary": "## Summary\nSQLite was chosen. Columns were name,status,created."
+    },
+    {
+      "id": "a4",
+      "type": "assistant",
+      "time": {
+        "created": 1700000000400
+      },
+      "agent": "build",
+      "cost": 0,
+      "tokens": {},
+      "finish": "stop",
+      "model": {
+        "id": "fixture-model",
+        "providerID": "fixture-provider"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "The real order is name,created,status."
+        }
+      ]
+    },
+    {
+      "id": "u5",
+      "type": "user",
+      "time": {
+        "created": 1700000000500
+      },
+      "text": "ok",
+      "files": []
+    }
+  ]
+}

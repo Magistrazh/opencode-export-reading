@@ -107,6 +107,32 @@
       "check_summary": 0
     }
   },
+  "v2-compaction": {
+    "purpose": "flat v2 export: positional boundary and inline summary",
+    "messages": 6,
+    "compactions": 1,
+    "summary_state": "present",
+    "search": {
+      "query": "SQLite",
+      "before_tail_hits": 2
+    },
+    "digest": {
+      "requests": 1,
+      "turn_end": 1,
+      "boundary_index": 4
+    },
+    "check_summary": {
+      "warnings": 1,
+      "sequences": 1
+    },
+    "exit_codes": {
+      "timeline": 0,
+      "before_tail": 0,
+      "show_summary": 0,
+      "dump": 0,
+      "check_summary": 0
+    }
+  },
   "huge-tool-output": {
     "purpose": "one very large tool output for max-chars/truncation",
     "messages": 2,

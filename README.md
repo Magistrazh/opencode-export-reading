@@ -59,11 +59,16 @@ python "$SKILL_DIR/scripts/inspect-export.py" --selftest
 Export a session and point the tool at it:
 
 ```bash
-opencode export <session-id> > session.json
+opencode session export <session-id> > session.json   # v1 used `opencode export`
 
 SKILL_DIR=~/.config/opencode/skills/opencode-export-reading
 EXPORT=/path/to/session.json
 ```
+
+Both export shapes are read: the older `{info, parts}` messages and the flat v2
+messages (`type`, `text`, `content`, one `compaction` message carrying the
+summary). A v2 compaction has no `tail_start_id`, so its boundary is positional —
+the message right after it.
 
 Start with the compaction map and the surviving summary:
 

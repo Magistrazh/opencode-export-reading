@@ -159,6 +159,26 @@ paraphrase of the removed context, not a copy.
 Several compactions can occur in one session. Only the last one describes the
 current context; earlier summaries are themselves history.
 
+## v2 export shape
+
+`opencode session export` in v2 writes flat messages instead of `{info, parts}`.
+The tool normalizes them on read, so every mode works on both shapes and message
+indices still match the file one-to-one.
+
+| v2 `type` | Role in the tool | Content |
+|---|---|---|
+| `user` | `user` | `text`, `files[]` (size taken from `data`, not expanded) |
+| `assistant` | `assistant` | `content[]` with `text`, `reasoning`, `tool` (`name`, `state.status/input/content`), `file`; plus `model`, `cost`, `tokens`, `finish`, `agent` |
+| `compaction` | `system` | one part: `{type: "compaction", positional: true, summary}` |
+| `system`, `synthetic` | `system` | `text` |
+| `idle`, `agent-switched`, `location-switched` | `system` | nothing; the index slot is still consumed |
+
+A v2 compaction has no `tail_start_id`: `status`, `reason` (`manual`, `auto`,
+`overflow`) and `summary` replace the v1 event/summary pair. Its boundary is
+positional — the message after it is the first one still live — and `--json`
+reports `boundary_kind: "positional"`. `--digest`, `--check-summary` and
+`--before-tail` use that same boundary.
+
 ## Search fields (`--fields`)
 
 | Field | Source |
@@ -170,6 +190,7 @@ current context; earlier summaries are themselves history.
 | `tool-output` | `tool.state.output` — what the model saw |
 | `tool-error` | `tool.state.error` |
 | `file` | `file.filename` |
+| `summary` | `compaction` part `summary` (v2 exports) |
 
 Hits are reported with message index, id, timestamp, role, field and a snippet.
 `before_last_compaction` is true when the hit index is before the last

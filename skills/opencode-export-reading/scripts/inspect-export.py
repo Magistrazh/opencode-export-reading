@@ -52,7 +52,7 @@ KNOWN_PARTS = {
     "text", "reasoning", "tool", "file", "step-start", "step-finish",
     "compaction", "snapshot", "patch", "agent",
 }
-ROLES = {"user", "assistant"}
+ROLES = {"user", "assistant", "system"}
 STATUSES = {"pending", "running", "completed", "error"}
 
 
@@ -140,8 +140,134 @@ class JsonStream:
             return obj
 
 
+def _v2_file_parts(items) -> list[dict]:
+    parts = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data")
+        approx = len(data) * 3 // 4 if isinstance(data, str) else None
+        parts.append({
+            "type": "file",
+            "mime": item.get("mime") or item.get("mediaType") or "?",
+            "filename": item.get("filename") or item.get("name") or "?",
+            "url": item.get("url") or "",
+            "approx_bytes": approx,
+        })
+    return parts
+
+
+def _v2_content_parts(content) -> list[dict]:
+    parts = []
+    for item in content or []:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if kind in ("text", "reasoning"):
+            parts.append({"type": kind, "text": str(item.get("text") or "")})
+        elif kind == "tool":
+            state = item.get("state") or {}
+            output = "".join(
+                str(chunk.get("text") or "")
+                for chunk in state.get("content") or []
+                if isinstance(chunk, dict)
+            )
+            parts.append({
+                "type": "tool",
+                "tool": item.get("name") or "?",
+                "state": {
+                    "status": state.get("status"),
+                    "input": state.get("input") or {},
+                    "output": output or str(state.get("output") or ""),
+                    "error": state.get("error"),
+                    "title": state.get("title") or "",
+                },
+            })
+        elif kind == "file":
+            parts.extend(_v2_file_parts([item]))
+    return parts
+
+
+def v2_parts(msg: dict) -> list[dict]:
+    """Parts for a flat v2 message."""
+    kind = msg.get("type")
+    if kind == "user":
+        parts = []
+        text = str(msg.get("text") or "")
+        if text:
+            parts.append({"type": "text", "text": text})
+        parts.extend(_v2_file_parts(msg.get("files")))
+        return parts
+    if kind == "assistant":
+        return _v2_content_parts(msg.get("content"))
+    if kind == "compaction":
+        summary = str(msg.get("summary") or "")
+        reason = str(msg.get("reason") or "")
+        return [{
+            "type": "compaction",
+            "tail_start_id": None,
+            "positional": True,
+            "summary": summary,
+            "auto": reason == "auto",
+            "overflow": reason == "overflow",
+        }]
+    text = str(msg.get("text") or "")
+    return [{"type": "text", "text": text}] if text else []
+
+
+def v2_role(kind: str) -> str:
+    if kind in ("user", "assistant"):
+        return kind
+    return "system"
+
+
+def normalize_message(msg: dict) -> dict:
+    """Flat v2 `opencode session export` message -> internal {info, parts}.
+
+    A v1 message already has {info, parts} and passes through untouched. Every
+    v2 message keeps exactly one slot, so --from-index/--to-index stay
+    meaningful and message ids still resolve.
+    """
+    if not isinstance(msg, dict) or isinstance(msg.get("info"), dict):
+        return msg
+    kind = msg.get("type")
+    if not isinstance(kind, str):
+        return msg
+    model = msg.get("model")
+    model = model if isinstance(model, dict) else {}
+    return {
+        "info": {
+            "id": msg.get("id"),
+            "role": v2_role(kind),
+            "time": msg.get("time") or {},
+            "cost": msg.get("cost") or 0,
+            "tokens": msg.get("tokens") or {},
+            "modelID": model.get("id"),
+            "providerID": model.get("providerID"),
+            "variant": model.get("variant"),
+            "finish": msg.get("finish"),
+            "agent": msg.get("agent"),
+        },
+        "parts": v2_parts(msg),
+    }
+
+
+def normalize_info(info):
+    """v2 session info keeps the working directory under location.directory."""
+    if not isinstance(info, dict):
+        return info
+    if info.get("directory") is None and isinstance(info.get("location"), dict):
+        info = dict(info)
+        info["directory"] = info["location"].get("directory")
+    return info
+
+
 def stream_export(path: Path, on_message) -> dict:
     """Parse the export, calling on_message(idx, message) for each message.
+
+    Messages are normalized first, so callbacks always see the internal shape
+    ({info, parts}) and never the flat v2 `opencode session export` one. Index
+    parity is preserved: one message in, one message out.
 
     Return False from the callback to stop early. Returns session info (None if
     the scan was stopped before the info block was complete).
@@ -166,7 +292,7 @@ def stream_export(path: Path, on_message) -> dict:
             elif key == "messages":
                 stream.expect("[")
                 while stream.peek() != "]":
-                    if on_message(idx, stream.value()) is False:
+                    if on_message(idx, normalize_message(stream.value())) is False:
                         stop = True
                         break
                     idx += 1
@@ -182,7 +308,7 @@ def stream_export(path: Path, on_message) -> dict:
                 stream.expect(",")
         if not stop and not isinstance(info, dict):
             raise ExportError("в экспорте нет info")
-        return info
+        return normalize_info(info)
     finally:
         stream.close()
 
@@ -223,6 +349,7 @@ class Aggregator:
         self.tool_bytes = 0
         self.errors_count = 0
         self.users = 0
+        self.role_counts: Counter = Counter()
         self.idx = 0
         self.compaction_events: list[dict] = []
         self.last_compaction_idx: int | None = None
@@ -258,6 +385,7 @@ class Aggregator:
         self.last_ms = created
         if role == "user":
             self.users += 1
+        self.role_counts[role] += 1
 
         # Части разбираем у обеих ролей: у user лежат вложения и метки
         # компакции, и если считать только assistant — они молча исчезнут.
@@ -292,7 +420,9 @@ class Aggregator:
             elif ptype == "file":
                 url = p.get("url") or ""
                 payload = url.split(",", 1)[1] if url.startswith("data:") and "," in url else url
-                approx = len(payload) * 3 // 4 if url.startswith("data:") else len(url)
+                approx = p.get("approx_bytes")
+                if not isinstance(approx, int):
+                    approx = len(payload) * 3 // 4 if url.startswith("data:") else len(url)
                 self.files.append({
                     "mime": p.get("mime") or "?",
                     "filename": p.get("filename") or "?",
@@ -306,6 +436,7 @@ class Aggregator:
                 if p.get("overflow"):
                     self.compactions["overflow"] += 1
                 self.last_compaction_idx = idx
+                summary = str(p.get("summary") or "")
                 self.compaction_events.append({
                     "n": len(self.compaction_events) + 1,
                     "idx": idx,
@@ -313,9 +444,10 @@ class Aggregator:
                     "auto": bool(p.get("auto")),
                     "overflow": bool(p.get("overflow")),
                     "tail_start_id": p.get("tail_start_id"),
-                    "summary_chars": 0,
-                    "summary_head": "",
-                    "verified": False,
+                    "positional": bool(p.get("positional")),
+                    "summary_chars": len(summary),
+                    "summary_head": " ".join(summary.split())[:90],
+                    "verified": bool(summary),
                 })
 
         if role != "assistant":
@@ -371,6 +503,19 @@ class Aggregator:
         if cost > 0:
             self.cost_messages.append((cost, str(mi.get("id")), f"{key[1]}@{key[2]}",
                                        total_tokens, brief(msg)))
+
+    def message_counts(self) -> dict:
+        """Per-role counts; `system` appears only when the export has such rows."""
+        counts = {
+            "total": self.idx,
+            "user": self.users,
+            "assistant": self.role_counts.get("assistant", 0),
+            "with_error": self.errors_count,
+            "finish": dict(self.finish),
+        }
+        if self.role_counts.get("system"):
+            counts["system"] = self.role_counts["system"]
+        return counts
 
     def result(self, info: dict, name: str, size: int | None, top: int = 5) -> dict:
         warnings = self.warnings
@@ -438,13 +583,7 @@ class Aggregator:
                 "cost_reported": sess_cost,
                 "tokens_reported": sess_tokens,
             },
-            "messages": {
-                "total": self.idx,
-                "user": self.users,
-                "assistant": self.idx - self.users,
-                "with_error": self.errors_count,
-                "finish": dict(self.finish),
-            },
+            "messages": self.message_counts(),
             "period": {
                 "start_ms": self.first_ms,
                 "end_ms": self.last_ms,
@@ -503,8 +642,8 @@ def analyse_data(data: dict, name: str = "<memory>", size: int | None = None,
         raise ExportError(f"{name}: messages должен быть списком")
     agg = Aggregator()
     for i, msg in enumerate(data["messages"]):
-        agg.add(i, msg)
-    return agg.result(data["info"], name, size, top)
+        agg.add(i, normalize_message(msg))
+    return agg.result(normalize_info(data["info"]), name, size, top)
 
 
 def analyse_file(path: Path, top: int = 5) -> dict:
@@ -531,6 +670,10 @@ def iter_fields(msg: dict):
                 yield "tool-error", str(state["error"])
         elif ptype == "file":
             yield "file", str(p.get("filename") or "")
+        elif ptype == "compaction":
+            summary = str(p.get("summary") or "")
+            if summary:
+                yield "summary", summary
 
 
 def scan_compactions(path: Path) -> list[dict]:
@@ -543,6 +686,7 @@ def scan_compactions(path: Path) -> list[dict]:
                     "n": len(events) + 1,
                     "event_idx": idx,
                     "tail_id": p.get("tail_start_id"),
+                    "positional": bool(p.get("positional")),
                     "auto": bool(p.get("auto")),
                     "overflow": bool(p.get("overflow")),
                 })
@@ -565,6 +709,13 @@ def compaction_boundaries(path: Path) -> list[dict]:
         tail_id = event.get("tail_id")
         event["tail_resolved"] = bool(tail_id) and tail_id in id_to_idx
         event["tail_idx"] = id_to_idx.get(tail_id) if event["tail_resolved"] else None
+        event["boundary_kind"] = "tail_start_id" if event["tail_resolved"] else None
+        if not event["tail_resolved"] and event.get("positional"):
+            idx = event.get("event_idx")
+            if isinstance(idx, int):
+                event["tail_idx"] = idx + 1
+                event["tail_resolved"] = True
+                event["boundary_kind"] = "positional"
     return events
 
 
@@ -592,9 +743,11 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
     cap = max(limit * 10, 200)
     events = scan_compactions(path)
     selected_tail: str | None = None
+    selected_boundary: int | None = None
     selected_seen = False
     tail_id: str | None = None
     tail_idx: int | None = None
+    tail_position: int | None = None
     last_event: int | None = None
     if before_compaction is not None:
         if not events:
@@ -604,24 +757,36 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
                 f"в экспорте только {len(events)} компакций, запрошена {before_compaction}")
         chosen = events[before_compaction - 1]
         selected_tail = chosen.get("tail_id")
-        if not selected_tail:
+        if not selected_tail and chosen.get("positional"):
+            selected_boundary = chosen["event_idx"] + 1
+        if not selected_tail and selected_boundary is None:
             raise ExportError(
                 f"компакция #{before_compaction}: tail_start_id отсутствует")
         last_event = events[-1]["event_idx"]
     elif before_tail:
         if not events:
             raise ExportError("в экспорте нет компакций — --before-tail неприменим")
-        selected_tail = events[-1].get("tail_id")
-        if not selected_tail:
+        last = events[-1]
+        selected_tail = last.get("tail_id")
+        if not selected_tail and last.get("positional"):
+            selected_boundary = last["event_idx"] + 1
+        if not selected_tail and selected_boundary is None:
             raise ExportError("последняя компакция: tail_start_id отсутствует")
-        last_event = events[-1]["event_idx"]
+        last_event = last["event_idx"]
     else:
         last = events[-1] if events else None
         last_event = last["event_idx"] if last else None
-        tail_id = last.get("tail_id") if last else None
+        if last:
+            if last.get("tail_id"):
+                tail_id = last["tail_id"]
+            elif last.get("positional"):
+                tail_position = last["event_idx"] + 1
 
     def on_message(idx: int, msg: dict):
         nonlocal tail_idx, selected_seen
+        if selected_boundary is not None and idx >= selected_boundary:
+            tail_idx = selected_boundary
+            return False
         if context_window:
             before = list(recent)
             if pending:
@@ -695,17 +860,26 @@ def find_hits_many(path: Path, queries: list[str], regex: bool = False,
     if selected_tail is not None and not selected_seen:
         raise ExportError(
             "tail_start_id выбранной компакции не найден — граница не определена")
-    if selected_tail is not None or tail_id and tail_idx is not None:
+    if selected_boundary is not None:
+        boundary = last_boundary = selected_boundary
+    elif selected_tail is not None or tail_id and tail_idx is not None:
         boundary = tail_idx
         last_boundary = tail_idx
+    elif tail_position is not None:
+        boundary = last_boundary = tail_position
     else:
         boundary = None
         last_boundary = None
-    kind = ("compaction_tail" if before_compaction is not None
-            else ("tail_start_id" if selected_tail is not None
-                  else ("tail_start_id" if tail_id and tail_idx is not None
-                        else ("missing_tail" if (tail_id or last_event is not None)
-                              else None))))
+    if before_compaction is not None:
+        kind = "compaction_tail"
+    elif selected_tail is not None or tail_id and tail_idx is not None:
+        kind = "tail_start_id"
+    elif selected_boundary is not None or tail_position is not None:
+        kind = "positional"
+    elif tail_id or last_event is not None:
+        kind = "missing_tail"
+    else:
+        kind = None
     results = []
     for qi, (query, hits, total) in enumerate(zip(queries, hits_by, totals)):
         for hit in hits:
@@ -794,9 +968,15 @@ def format_message(idx: int, msg: dict, max_chars: int = 3000,
         elif ptype == "file":
             lines.append(f"[file {p.get('mime')}] {p.get('filename')}")
         elif ptype == "compaction":
+            boundary = (f"tail_start_id={p.get('tail_start_id')}"
+                        if p.get("tail_start_id") else
+                        ("tail=positional (next message)" if p.get("positional")
+                         else "tail_start_id=None"))
+            summary = str(p.get("summary") or "")
             lines.append(
-                f"[compaction] tail_start_id={p.get('tail_start_id')} "
+                f"[compaction] {boundary} "
                 f"auto={p.get('auto')} overflow={p.get('overflow')}"
+                + (f" summary={len(summary)} chars" if summary else "")
             )
     return "\n".join(lines)
 
@@ -1040,12 +1220,16 @@ def find_token(text: str, token: str) -> int:
 
 
 def summary_numbers(path: Path) -> int:
-    """How many compaction summaries the export carries."""
+    """How many compaction summaries the export carries (v1 and v2 layouts)."""
     total = 0
 
     def on_message(idx: int, msg: dict) -> None:
         nonlocal total
+        parts = msg.get("parts") or []
         if (msg.get("info") or {}).get("mode") == "compaction":
+            total += 1
+            return
+        if any(p.get("type") == "compaction" and p.get("summary") for p in parts):
             total += 1
 
     stream_export(path, on_message)
@@ -1131,19 +1315,35 @@ def check_summary(path: Path, number: int) -> dict:
 
 
 def show_summary(path: Path, number: int) -> str:
+    """Summary N in file order.
+
+    v1 keeps the summary in the assistant message that follows the compaction
+    event; v2 keeps it inside the compaction message itself
+    (`summary` on the compaction part). Both are readable here.
+    """
     seen = 0
     text = ""
 
     def on_message(idx: int, msg: dict):
         nonlocal seen, text
-        if (msg.get("info") or {}).get("mode") != "compaction":
+        parts = msg.get("parts") or []
+        summary = ""
+        if (msg.get("info") or {}).get("mode") == "compaction":
+            summary = "\n\n".join(
+                p.get("text", "") for p in parts if p.get("type") == "text"
+            ).strip()
+        else:
+            inline = next(
+                (p for p in parts if p.get("type") == "compaction" and p.get("summary")),
+                None,
+            )
+            summary = str(inline.get("summary") or "").strip() if inline else ""
+        if not summary and (msg.get("info") or {}).get("mode") != "compaction":
             return
         seen += 1
         if seen != number:
             return
-        text = "\n\n".join(
-            p.get("text", "") for p in msg.get("parts", []) if p.get("type") == "text"
-        ).strip()
+        text = summary
         return False
 
     stream_export(path, on_message)
@@ -1442,10 +1642,10 @@ def human(summary: dict, brief: bool = False) -> str:
         out.append("period      — (сообщений нет)")
     out.append(f"sanitized   {'yes — только счётчики и цифры' if s['sanitized'] else 'no'}")
     m = s["messages"]
-    out.append(
-        f"messages    {m['total']} (user {m['user']}, assistant {m['assistant']}, "
-        f"errors {m['with_error']})"
-    )
+    roles = f"user {m['user']}, assistant {m['assistant']}"
+    if m.get("system"):
+        roles += f", system {m['system']}"
+    out.append(f"messages    {m['total']} ({roles}, errors {m['with_error']})")
     if not brief:
         out.append(f"finish      {m['finish']}")
         out.append(f"models      {len(s['models'])} (session.model is only the last one)")
@@ -1484,7 +1684,7 @@ def human(summary: dict, brief: bool = False) -> str:
             kind = "auto" if e["auto"] else ("overflow" if e["overflow"] else "manual")
             out.append(
                 f"  #{e['n']} {when} {kind:<8} summary {e['summary_chars'] / 1024:5.1f} KB  "
-                f"tail {e['tail_start_id']}"
+                f"tail {e['tail_start_id'] or 'positional'}"
             )
         out.append("  история до последней компакции: --search QUERY --before-tail "
                    "/ --show-summary N")
@@ -1604,7 +1804,7 @@ def selftest() -> int:
 
     raises(lambda: analyse_data({"info": {}, "messages": {}}), "messages не список — отказ")
     raises(lambda: analyse_data({"messages": []}), "нет info — отказ")
-    bad_role = {"info": info, "messages": [{"info": {"id": "x", "role": "system",
+    bad_role = {"info": info, "messages": [{"info": {"id": "x", "role": "robot",
                                                      "time": {"created": 1}}, "parts": []}]}
     raises(lambda: analyse_data(bad_role), "неизвестная роль — отказ")
     bad_time = {"info": info, "messages": [{"info": {"id": "x", "role": "user"},
@@ -1920,6 +2120,108 @@ def selftest() -> int:
              "parts": [{"type": "text", "text": ""}]},
         ]}, ensure_ascii=False), encoding="utf-8")
         raises(lambda: check_summary(empty_chk, 1), "check-summary: пустая сводка — отказ")
+
+        # --- v2 export shape: flat messages are normalized on read ---
+        v1_msg = {"info": {"id": "m", "role": "user", "time": {"created": 1}},
+                  "parts": [{"type": "text", "text": "x"}]}
+        ok(normalize_message(v1_msg) is v1_msg, "v2: v1-сообщение проходит без изменений")
+        norm = normalize_message({"id": "v0", "type": "user", "time": {"created": 1},
+                                  "text": "hello v2", "files": []}) or {}
+        ok((norm.get("info") or {}).get("role") == "user"
+           and norm.get("parts") == [{"type": "text", "text": "hello v2"}],
+           "v2: user-сообщение приводится к info/parts")
+        norm = normalize_message({
+            "id": "v1", "type": "assistant", "time": {"created": 2}, "agent": "build",
+            "cost": 0.5, "tokens": {"input": 10, "output": 2}, "finish": "stop",
+            "model": {"id": "m2", "providerID": "p"},
+            "content": [
+                {"type": "reasoning", "text": "think"},
+                {"type": "tool", "name": "shell",
+                 "state": {"status": "completed", "input": {"command": "ls"},
+                           "content": [{"type": "text", "text": "out"}]}},
+                {"type": "text", "text": "answer"},
+            ],
+        }) or {}
+        meta = norm.get("info") or {}
+        parts = norm.get("parts") or []
+        ok(meta.get("modelID") == "m2" and meta.get("cost") == 0.5
+           and meta.get("finish") == "stop", "v2: метаданные assistant переносятся")
+        ok([p.get("type") for p in parts] == ["reasoning", "tool", "text"],
+           "v2: порядок частей сохраняется")
+        tool_part = next((p for p in parts if p.get("type") == "tool"), {})
+        ok(tool_part.get("tool") == "shell"
+           and (tool_part.get("state") or {}).get("output") == "out",
+           "v2: вывод tool берётся из state.content")
+        norm = normalize_message({"id": "c1", "type": "compaction",
+                                  "time": {"created": 3}, "status": "completed",
+                                  "reason": "manual", "summary": "sum"}) or {}
+        comp_part = (norm.get("parts") or [{}])[0]
+        ok(comp_part.get("type") == "compaction"
+           and comp_part.get("positional") is True
+           and comp_part.get("summary") == "sum",
+           "v2: компакция несёт summary и positional, без tail_start_id")
+        norm = normalize_message({"id": "s1", "type": "system",
+                                  "time": {"created": 4}, "text": "notice"}) or {}
+        ok((norm.get("info") or {}).get("role") == "system"
+           and norm.get("parts") == [{"type": "text", "text": "notice"}],
+           "v2: служебное сообщение не выдаётся за user/assistant")
+        ok(v2_role("idle") == "system" and v2_parts({"type": "idle"}) == [],
+           "v2: пустое служебное сообщение не создаёт частей")
+
+        v2_file = {"info": dict(info, cost=0), "messages": [
+            {"id": "f0", "type": "user", "time": {"created": 1}, "text": "see",
+             "files": [{"mime": "image/png", "filename": "a.png", "data": "A" * 400}]},
+        ]}
+        s2 = analyse_data(v2_file, "v2.json")
+        ok(s2["files"] and s2["files"][0]["approx_bytes"] == 300,
+           "v2: размер вложения из data считается без раздувания url")
+        ok(s2["messages"]["total"] == 1 and s2["messages"]["user"] == 1,
+           "v2: сообщение считается один раз")
+
+        v2_path = Path(td) / "v2.json"
+        v2_path.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
+            {"id": "v0", "type": "user", "time": {"created": 1}, "text": "lost: SQLite"},
+            {"id": "v1", "type": "assistant", "time": {"created": 2}, "finish": "stop",
+             "cost": 0, "tokens": {}, "model": {"id": "m", "providerID": "p"},
+             "content": [{"type": "text", "text": "ok"}]},
+            {"id": "v2", "type": "compaction", "time": {"created": 3},
+             "status": "completed", "reason": "manual", "summary": "## Summary\nSQLite"},
+            {"id": "v3", "type": "user", "time": {"created": 4}, "text": "tail"},
+            {"id": "v4", "type": "assistant", "time": {"created": 5}, "finish": "stop",
+             "cost": 0, "tokens": {}, "model": {"id": "m", "providerID": "p"},
+             "content": [{"type": "text", "text": "tail answer"}]},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        bounds = compaction_boundaries(v2_path)
+        ok(len(bounds) == 1 and bounds[0]["tail_idx"] == 3
+           and bounds[0]["boundary_kind"] == "positional",
+           "v2: граница выводится из позиции компакции")
+        try:
+            v2_summary = show_summary(v2_path, 1)
+        except ExportError:
+            v2_summary = ""
+        ok(v2_summary.startswith("## Summary"),
+           "v2: сводка читается из самой компакции")
+        ok(summary_numbers(v2_path) == 1, "v2: событие и сводка не дублируются")
+        v2_hits, v2_meta = find_hits(v2_path, "SQLite", before_tail=True)
+        ok(any(h["idx"] == 0 and h["field"] == "text" for h in v2_hits)
+           and any(h["field"] == "summary" for h in v2_hits),
+           "v2: поиск видит и историю, и сводку компакции")
+        ok(v2_meta["boundary_kind"] == "positional" and v2_meta["boundary"] == 3,
+           "v2: --before-tail опирается на позиционную границу")
+        ok(v2_hits and all(h["before_last_compaction"] for h in v2_hits),
+           "v2: найденное до границы помечено как потерянное")
+        v2_counts = analyse_file(v2_path)["messages"]
+        ok(v2_counts["total"] == 5 and v2_counts["user"] == 2
+           and v2_counts["assistant"] == 2 and v2_counts.get("system") == 1,
+           "v2: служебные сообщения не попадают в счётчик assistant")
+        v2_digest = build_digest(v2_path)
+        ok(v2_digest["boundary"] == 3
+           and [r["id"] for r in v2_digest["requests"]] == ["v0"]
+           and [t["id"] for t in v2_digest["turn_end"]] == ["v1"],
+           "v2: digest видит запрос и завершённый ход до границы")
+        v2_check = check_summary(v2_path, 1)
+        ok(v2_check["compaction"] == 1 and v2_check["tail_index"] == 3,
+           "v2: check-summary берёт ту же позиционную границу")
         empty_path = Path(td) / "empty-summary.json"
         empty_path.write_text(json.dumps({"info": dict(info, cost=0), "messages": [
             {"info": {"id": "e0", "role": "user", "time": {"created": 1}},
@@ -2858,8 +3160,11 @@ def cmd_compactions(path: Path, args: argparse.Namespace) -> tuple[int, dict]:
             when = stamp(e["time"])
             kind = ("auto" if e.get("auto")
                 else ("overflow" if e.get("overflow") else "manual"))
+            boundary = e["tail_start_id"]
+            if not boundary:
+                boundary = ("positional (next message)" if e.get("positional") else "?")
             print(f"  #{e['n']} {when} {kind:<8} summary {e['summary_chars'] / 1024:5.1f} KB  "
-                  f"tail {e['tail_start_id']}")
+                  f"tail {boundary}")
             print(f"    {safe_line(e.get('summary_head', ''))}")
     return 0, extra
 

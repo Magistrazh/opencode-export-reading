@@ -77,6 +77,28 @@ def write(name: str, messages: list[dict], sanitized: bool = False) -> None:
     )
 
 
+def v2_user(mid: str, idx: int, text: str) -> dict:
+    return {"id": mid, "type": "user", "time": {"created": NOW + idx * 100},
+            "text": text, "files": []}
+
+
+def v2_assistant(mid: str, idx: int, text: str) -> dict:
+    return {"id": mid, "type": "assistant", "time": {"created": NOW + idx * 100},
+            "agent": "build", "cost": 0, "tokens": {}, "finish": "stop",
+            "model": {"id": "fixture-model", "providerID": "fixture-provider"},
+            "content": [{"type": "text", "text": text}] if text else []}
+
+
+def v2_system(mid: str, idx: int, text: str) -> dict:
+    return {"id": mid, "type": "system", "time": {"created": NOW + idx * 100},
+            "text": text}
+
+
+def v2_compaction(mid: str, idx: int, summary: str) -> dict:
+    return {"id": mid, "type": "compaction", "time": {"created": NOW + idx * 100},
+            "status": "completed", "reason": "manual", "summary": summary}
+
+
 def main() -> None:
     write("normal-compaction", [
         user("m0", 0, "Decision before compaction: use SQLite because it is embedded."),
@@ -134,6 +156,16 @@ def main() -> None:
         summary("s1", 2, "## Summary\nColumns were name,status,created; ran with --count 20."),
         assistant("tail1", 3, "The real order is name,created,status."),
         user("tail2", 4, "Rerun with --count 50."),
+    ])
+
+    write("v2-compaction", [
+        v2_user("u0", 0, "Lost v2 fact: SQLite chosen for the queue."),
+        v2_assistant("a1", 1, "Noted."),
+        v2_system("s2", 2, "The available tools have changed."),
+        v2_compaction("c3", 3,
+                      "## Summary\nSQLite was chosen. Columns were name,status,created."),
+        v2_assistant("a4", 4, "The real order is name,created,status."),
+        v2_user("u5", 5, "ok"),
     ])
 
     huge = assistant("m1", 1)
@@ -198,6 +230,16 @@ def main() -> None:
             "summary_state": "present",
             "search": {"query": "order", "before_tail_hits": 0},
             "check_summary": {"warnings": 2, "sequences": 1},
+            "exit_codes": {"timeline": 0, "before_tail": 0, "show_summary": 0,
+                           "dump": 0, "check_summary": 0},
+        },
+        "v2-compaction": {
+            "purpose": "flat v2 export: positional boundary and inline summary",
+            "messages": 6, "compactions": 1,
+            "summary_state": "present",
+            "search": {"query": "SQLite", "before_tail_hits": 2},
+            "digest": {"requests": 1, "turn_end": 1, "boundary_index": 4},
+            "check_summary": {"warnings": 1, "sequences": 1},
             "exit_codes": {"timeline": 0, "before_tail": 0, "show_summary": 0,
                            "dump": 0, "check_summary": 0},
         },
