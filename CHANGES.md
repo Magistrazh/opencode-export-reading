@@ -1,5 +1,27 @@
 # Changes
 
+## 0.17.0
+
+- Reads the v2 shape written by `opencode session export`: flat messages with
+  `type`, `text` and a `content` array are normalized to the internal
+  `{info, parts}` model on read, so every mode works with no pre-processing
+  step. Message indices still match the file one-to-one, and v1 `{info, parts}`
+  exports keep working unchanged.
+- A v2 compaction carries its own summary and has no `tail_start_id`, so its
+  boundary is positional: the message after it. `--json` reports
+  `boundary_kind: "positional"`, `--compactions` prints `tail positional`, and
+  `--before-tail`, `--digest` and `--check-summary` use that boundary instead of
+  failing on a missing id.
+- `--search` also matches the summary inside a compaction part (`field:
+  summary`), so v2 summaries stay searchable like their v1 counterparts.
+- Service messages (`system`, `synthetic`, `idle`, `agent-switched`,
+  `location-switched`) keep their index slot and are counted as `system`, not as
+  `assistant`; the `messages` object gains a `system` key only when the export
+  has such rows.
+- Docs: `opencode export` no longer exists in v2. README and SKILL.md name
+  `opencode session export <session-id>`, and `references/schema.md` documents
+  the flat shape.
+
 ## 0.16.0
 
 - `--digest` lists the requests and the completed turn ends before the tail, one
